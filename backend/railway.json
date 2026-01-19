@@ -5,7 +5,7 @@
   },
   "deploy": {
     "numReplicas": 1,
-    "startCommand": "npm run build && node dist/index.js",
-    "restartPolicyMaxRetries": 5
+    "startCommand": "../start.sh",
+    "restartPolicyMaxRetries": 10
   }
 }
