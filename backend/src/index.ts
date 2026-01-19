@@ -22,6 +22,9 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Trust proxy - required for Railway/Heroku/etc
+app.set('trust proxy', 1);
+
 // Security middleware
 app.use(helmet());
 app.use(express.json({ limit: '10mb' }));
@@ -45,7 +48,7 @@ const userLimiter = rateLimit({
   windowMs: 1 * 60 * 1000,
   max: 100,
   keyGenerator: (req: any) => req.user?.id || req.ip,
-  skip: (req: any) => !req.user, // Skip if no user authenticated
+  skip: (req: any) => !req.user,
 });
 
 // Initialize Supabase client
@@ -92,7 +95,6 @@ app.use(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => 
   req.token = token;
 
   try {
-    // Verify JWT with Supabase
     const response = await fetch(`${supabaseUrl}/auth/v1/user`, {
       method: 'GET',
       headers: {
@@ -125,7 +127,6 @@ app.use(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => 
   }
 });
 
-// Apply per-user rate limiting after auth
 app.use(userLimiter);
 
 /**
