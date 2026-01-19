@@ -74,7 +74,12 @@ interface AuthenticatedRequest extends Request {
 }
 
 app.use(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-  console.log(`🔨 ${req.method} ${req.path}`);
+  // Skip auth for public routes
+  if (req.path === '/health') {
+    return next();
+  }
+
+  console.log(`📨 ${req.method} ${req.path}`);
 
   const authHeader = req.headers.authorization;
 
