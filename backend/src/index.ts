@@ -10,7 +10,7 @@
  * - Helmet security headers
  */
 
-import express from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
@@ -44,8 +44,8 @@ app.use(globalLimiter);
 const userLimiter = rateLimit({
   windowMs: 1 * 60 * 1000,
   max: 100,
-  keyGenerator: (req) => req.user?.id || req.ip,
-  skip: (req) => !req.user, // Skip if no user authenticated
+  keyGenerator: (req: any) => req.user?.id || req.ip,
+  skip: (req: any) => !req.user, // Skip if no user authenticated
 });
 
 // Initialize Supabase client
@@ -61,20 +61,20 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey);
 /**
  * Health Check (PUBLIC - no auth required)
  */
-app.get('/health', (req, res) => {
+app.get('/health', (req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 /**
  * JWT Verification Middleware
  */
-interface AuthenticatedRequest extends express.Request {
+interface AuthenticatedRequest extends Request {
   user?: { id: string; email: string };
   token?: string;
 }
 
-app.use(async (req: AuthenticatedRequest, res, next) => {
-  console.log(`📨 ${req.method} ${req.path}`);
+app.use(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  console.log(`🔨 ${req.method} ${req.path}`);
 
   const authHeader = req.headers.authorization;
 
@@ -132,7 +132,7 @@ async function logAudit(
   success: boolean,
   data?: Record<string, unknown>,
   errorMessage?: string,
-  req?: express.Request
+  req?: Request
 ) {
   try {
     await supabase.from('audit_logs').insert({
@@ -141,7 +141,7 @@ async function logAudit(
       success,
       data: data ? JSON.stringify(data) : null,
       error_message: errorMessage || null,
-      ip_address: req?.ip || 'unknown',
+      ip_address: (req as any)?.ip || 'unknown',
       user_agent: req?.get('user-agent') || 'unknown',
       created_at: new Date().toISOString(),
     });
@@ -154,7 +154,7 @@ async function logAudit(
 /**
  * User Profile
  */
-app.post('/api/profile/get', async (req: AuthenticatedRequest, res) => {
+app.post('/api/profile/get', async (req: AuthenticatedRequest, res: Response) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
@@ -166,7 +166,7 @@ app.post('/api/profile/get', async (req: AuthenticatedRequest, res) => {
 
     if (error) throw error;
 
-    await logAudit(req.user.id, 'get_profile', true, {}, null, req);
+    await logAudit(req.user.id, 'get_profile', true, {}, undefined, req);
     res.json({ success: true, data });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -175,7 +175,7 @@ app.post('/api/profile/get', async (req: AuthenticatedRequest, res) => {
   }
 });
 
-app.post('/api/profile/update', async (req: AuthenticatedRequest, res) => {
+app.post('/api/profile/update', async (req: AuthenticatedRequest, res: Response) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
   console.log(`📝 Updating profile for user ${req.user.id}:`, req.body);
@@ -192,7 +192,7 @@ app.post('/api/profile/update', async (req: AuthenticatedRequest, res) => {
     }
 
     console.log('✅ Profile updated successfully');
-    await logAudit(req.user.id, 'update_profile', true, req.body, null, req);
+    await logAudit(req.user.id, 'update_profile', true, req.body, undefined, req);
     res.json({ success: true, data });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -205,11 +205,11 @@ app.post('/api/profile/update', async (req: AuthenticatedRequest, res) => {
 /**
  * Check-ins
  */
-app.post('/api/check-ins/list', async (req: AuthenticatedRequest, res) => {
+app.post('/api/check-ins/list', async (req: AuthenticatedRequest, res: Response) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
-    const { limit = 50, offset = 0 } = req.body;
+    const { limit = 50, offset = 0 } = req.body || {};
 
     const { data, error } = await supabase
       .from('user_check_ins')
@@ -220,7 +220,7 @@ app.post('/api/check-ins/list', async (req: AuthenticatedRequest, res) => {
 
     if (error) throw error;
 
-    await logAudit(req.user.id, 'get_check_ins', true, { limit, offset }, null, req);
+    await logAudit(req.user.id, 'get_check_ins', true, { limit, offset }, undefined, req);
     res.json({ success: true, data });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -229,7 +229,7 @@ app.post('/api/check-ins/list', async (req: AuthenticatedRequest, res) => {
   }
 });
 
-app.post('/api/check-ins/create', async (req: AuthenticatedRequest, res) => {
+app.post('/api/check-ins/create', async (req: AuthenticatedRequest, res: Response) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
@@ -243,7 +243,7 @@ app.post('/api/check-ins/create', async (req: AuthenticatedRequest, res) => {
 
     if (error) throw error;
 
-    await logAudit(req.user.id, 'create_check_in', true, req.body, null, req);
+    await logAudit(req.user.id, 'create_check_in', true, req.body, undefined, req);
     res.json({ success: true, data });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -255,11 +255,11 @@ app.post('/api/check-ins/create', async (req: AuthenticatedRequest, res) => {
 /**
  * Push Notifications
  */
-app.post('/api/devices/register', async (req: AuthenticatedRequest, res) => {
+app.post('/api/devices/register', async (req: AuthenticatedRequest, res: Response) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
-    const { expo_push_token, device_type, last_active } = req.body;
+    const { expo_push_token, device_type, last_active } = req.body || {};
 
     if (!expo_push_token || !device_type) {
       return res.status(400).json({ error: 'Missing required fields' });
@@ -279,7 +279,7 @@ app.post('/api/devices/register', async (req: AuthenticatedRequest, res) => {
 
     if (error) throw error;
 
-    await logAudit(req.user.id, 'register_device', true, { device_type }, null, req);
+    await logAudit(req.user.id, 'register_device', true, { device_type }, undefined, req);
     res.json({ success: true, data });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -288,7 +288,7 @@ app.post('/api/devices/register', async (req: AuthenticatedRequest, res) => {
   }
 });
 
-app.post('/api/devices/get', async (req: AuthenticatedRequest, res) => {
+app.post('/api/devices/get', async (req: AuthenticatedRequest, res: Response) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
@@ -298,9 +298,9 @@ app.post('/api/devices/get', async (req: AuthenticatedRequest, res) => {
       .eq('user_id', req.user.id)
       .single();
 
-    if (error && error.code !== 'PGRST116') throw error;
+    if (error && (error as any).code !== 'PGRST116') throw error;
 
-    await logAudit(req.user.id, 'get_device', true, {}, null, req);
+    await logAudit(req.user.id, 'get_device', true, {}, undefined, req);
     res.json({ success: true, data });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -309,7 +309,7 @@ app.post('/api/devices/get', async (req: AuthenticatedRequest, res) => {
   }
 });
 
-app.post('/api/devices/update-active', async (req: AuthenticatedRequest, res) => {
+app.post('/api/devices/update-active', async (req: AuthenticatedRequest, res: Response) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
@@ -320,7 +320,7 @@ app.post('/api/devices/update-active', async (req: AuthenticatedRequest, res) =>
 
     if (error) throw error;
 
-    await logAudit(req.user.id, 'update_last_active', true, {}, null, req);
+    await logAudit(req.user.id, 'update_last_active', true, {}, undefined, req);
     res.json({ success: true, data });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -332,11 +332,11 @@ app.post('/api/devices/update-active', async (req: AuthenticatedRequest, res) =>
 /**
  * Chat
  */
-app.post('/api/chat/messages', async (req: AuthenticatedRequest, res) => {
+app.post('/api/chat/messages', async (req: AuthenticatedRequest, res: Response) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
-    const { limit = 100, offset = 0 } = req.body;
+    const { limit = 100, offset = 0 } = req.body || {};
 
     const { data, error } = await supabase
       .from('chat_messages')
@@ -347,7 +347,7 @@ app.post('/api/chat/messages', async (req: AuthenticatedRequest, res) => {
 
     if (error) throw error;
 
-    await logAudit(req.user.id, 'get_chat_messages', true, { limit, offset }, null, req);
+    await logAudit(req.user.id, 'get_chat_messages', true, { limit, offset }, undefined, req);
     res.json({ success: true, data });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -356,11 +356,11 @@ app.post('/api/chat/messages', async (req: AuthenticatedRequest, res) => {
   }
 });
 
-app.post('/api/chat/send', async (req: AuthenticatedRequest, res) => {
+app.post('/api/chat/send', async (req: AuthenticatedRequest, res: Response) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
-    const { role, content } = req.body;
+    const { role, content } = req.body || {};
 
     if (!role || !content) {
       return res.status(400).json({ error: 'Missing role or content' });
@@ -377,7 +377,7 @@ app.post('/api/chat/send', async (req: AuthenticatedRequest, res) => {
 
     if (error) throw error;
 
-    await logAudit(req.user.id, 'create_chat_message', true, { role }, null, req);
+    await logAudit(req.user.id, 'create_chat_message', true, { role }, undefined, req);
     res.json({ success: true, data });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -389,7 +389,7 @@ app.post('/api/chat/send', async (req: AuthenticatedRequest, res) => {
 /**
  * Error handling
  */
-app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+app.use((err: any, req: Request, res: Response, next: NextFunction) => {
   console.error('Unhandled error:', err);
   res.status(500).json({
     error: 'Internal server error',
@@ -400,7 +400,7 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 // Start server
 app.listen(PORT, () => {
   console.log(`✅ KWO Backend running on http://localhost:${PORT}`);
-  console.log(`📡 Make sure SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are set in .env`);
+  console.log(`🔑 Make sure SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are set in .env`);
 });
 
 export default app;
