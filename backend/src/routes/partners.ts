@@ -4,10 +4,19 @@ import { verifyToken } from '../middleware/auth.js';
 
 const router = Router();
 
-// Initialize Supabase with service role key
-const supabaseUrl = process.env.SUPABASE_URL!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
+/**
+ * Helper to get Supabase client lazily
+ */
+const getSupabase = () => {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!url || !key) {
+    throw new Error('Missing Supabase configuration: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY');
+  }
+
+  return createClient(url, key);
+};
 
 // =============================================================================
 // TYPE DEFINITIONS
@@ -85,7 +94,7 @@ router.post('/add', async (req: Request, res: Response): Promise<void> => {
     }
 
     // Insert partner into database
-    const { data, error } = await supabase
+    const { data, error } = await getSupabase()
       .from('accountability_partners')
       .insert({
         user_id,
@@ -164,7 +173,7 @@ router.post('/list', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const { data, error } = await supabase
+    const { data, error } = await getSupabase()
       .from('accountability_partners')
       .select('*')
       .eq('user_id', user_id)
@@ -209,7 +218,7 @@ router.post('/find', async (req: Request, res: Response): Promise<void> => {
     // Clean phone number
     const cleanPhone = partner_phone.toString().replace(/[\s\-\(\)]/g, '');
 
-    const { data, error } = await supabase
+    const { data, error } = await getSupabase()
       .from('accountability_partners')
       .select('*')
       .eq('partner_phone', cleanPhone)
@@ -272,7 +281,7 @@ router.post('/update', async (req: Request, res: Response): Promise<void> => {
     }
 
     // Verify partner belongs to user
-    const { data: existingPartner } = await supabase
+    const { data: existingPartner } = await getSupabase()
       .from('accountability_partners')
       .select('user_id')
       .eq('id', partner_id)
@@ -287,7 +296,7 @@ router.post('/update', async (req: Request, res: Response): Promise<void> => {
     }
 
     // Update partner
-    const { data, error } = await supabase
+    const { data, error } = await getSupabase()
       .from('accountability_partners')
       .update(updates)
       .eq('id', partner_id)
@@ -345,7 +354,7 @@ router.post('/remove', async (req: Request, res: Response): Promise<void> => {
     }
 
     // Verify partner belongs to user
-    const { data: existingPartner } = await supabase
+    const { data: existingPartner } = await getSupabase()
       .from('accountability_partners')
       .select('user_id')
       .eq('id', partner_id)
@@ -360,7 +369,7 @@ router.post('/remove', async (req: Request, res: Response): Promise<void> => {
     }
 
     // Delete partner
-    const { error } = await supabase
+    const { error } = await getSupabase()
       .from('accountability_partners')
       .delete()
       .eq('id', partner_id);
