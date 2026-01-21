@@ -70,9 +70,16 @@ app.get('/health', (req: Request, res: Response) => {
 
 /**
  * JWT Verification Middleware
+ * FIXED: Updated interface to match JWT token structure with role, iat, exp
  */
 interface AuthenticatedRequest extends Request {
-  user?: { id: string; email: string };
+  user?: {
+    id: string;
+    email: string;
+    role: 'free_user' | 'premium_user' | 'admin';
+    iat: number;
+    exp: number;
+  };
   token?: string;
 }
 
@@ -107,16 +114,28 @@ app.use(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => 
       return res.status(401).json({ error: 'Invalid or expired token' });
     }
 
-    const userData = (await response.json()) as { id?: string; email?: string };
+    const userData = (await response.json()) as { 
+      id?: string; 
+      email?: string;
+      user_metadata?: {
+        role?: 'free_user' | 'premium_user' | 'admin';
+      };
+      iat?: number;
+      exp?: number;
+    };
 
     if (!userData.id) {
       console.log('❌ No user ID in token');
       return res.status(401).json({ error: 'No user ID in token' });
     }
 
+    // Set user with complete structure including role, iat, exp
     req.user = {
       id: userData.id,
       email: userData.email || '',
+      role: userData.user_metadata?.role || 'free_user',
+      iat: userData.iat || Math.floor(Date.now() / 1000),
+      exp: userData.exp || Math.floor(Date.now() / 1000) + 3600,
     };
 
     console.log(`✅ User authenticated: ${req.user.id}`);
