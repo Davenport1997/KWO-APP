@@ -123,6 +123,7 @@ export const verifyRefreshToken = (token: string): any => {
 
 /**
  * Generate new JWT token
+ * FIXED: Properly typed SignOptions
  */
 export const generateToken = (
   userId: string,
@@ -137,12 +138,13 @@ export const generateToken = (
       role
     },
     getJWTSecret(),
-    { expiresIn }
+    { expiresIn } as jwt.SignOptions
   );
 };
 
 /**
  * Generate refresh token
+ * FIXED: Properly typed SignOptions
  */
 export const generateRefreshToken = (
   userId: string,
@@ -157,7 +159,7 @@ export const generateRefreshToken = (
       role
     },
     getJWTRefreshSecret(),
-    { expiresIn }
+    { expiresIn } as jwt.SignOptions
   );
 };
 
