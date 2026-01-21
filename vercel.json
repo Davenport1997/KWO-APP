@@ -2,26 +2,26 @@
     "version": 2,
     "builds": [
         {
-            "src": "backend/src/index.ts",
+            "src": "src/index.ts",
             "use": "@vercel/node"
         }
     ],
-    "routes": [
+    "rewrites": [
         {
-            "src": "/api/auth/(.*)",
-            "dest": "backend/src/index.ts"
+            "source": "/api/auth/(.*)",
+            "destination": "src/index.ts"
         },
         {
-            "src": "/auth/(.*)",
-            "dest": "backend/src/index.ts"
+            "source": "/auth/(.*)",
+            "destination": "src/index.ts"
         },
         {
-            "src": "/api/(.*)",
-            "dest": "backend/src/index.ts"
+            "source": "/api/(.*)",
+            "destination": "src/index.ts"
         },
         {
-            "src": "/health",
-            "dest": "backend/src/index.ts"
+            "source": "/health",
+            "destination": "src/index.ts"
         }
     ]
 }
