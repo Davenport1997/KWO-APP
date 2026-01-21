@@ -15,7 +15,8 @@
 
 import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
-import { supabase } from '../db.js';
+// FIXED: Remove .js extension from import
+import { supabase } from '../db';
 
 const router = Router();
 
