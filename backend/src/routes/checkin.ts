@@ -2,8 +2,13 @@ import { Router, Request, Response } from 'express';
 import { verifyToken, requireOwnership } from '../middleware/auth.js';
 import { createActionLimiter } from '../middleware/rateLimiting.js';
 import { logRateLimitEvent } from '../utils/rateLimitMonitoring.js';
+import { createClient } from '@supabase/supabase-js';
 
 const router = Router();
+
+const getSupabase = () => {
+  return createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+};
 
 // Mock check-in storage
 const mockCheckIns: Record<string, Array<{
@@ -291,5 +296,29 @@ function generateInsights(checkIns: any[]): string[] {
 
   return insights;
 }
+
+/**
+ * SUPABASE DRIVEN ENDPOINTS (Migrated from index.ts)
+ */
+
+router.post('/list', verifyToken, async (req: Request, res: Response) => {
+  const { limit = 50, offset = 0 } = req.body;
+  const { data, error } = await getSupabase()
+    .from('user_check_ins')
+    .select('*')
+    .eq('user_id', req.user!.id)
+    .order('created_at', { ascending: false })
+    .range(offset, offset + limit - 1);
+  if (error) return res.status(400).json({ error: error.message });
+  res.json({ success: true, data });
+});
+
+router.post('/create', verifyToken, async (req: Request, res: Response) => {
+  const { data, error } = await getSupabase()
+    .from('user_check_ins')
+    .insert({ ...req.body, user_id: req.user!.id });
+  if (error) return res.status(400).json({ error: error.message });
+  res.json({ success: true, data });
+});
 
 export default router;
