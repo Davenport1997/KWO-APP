@@ -36,6 +36,31 @@ const OPENAI_CHAT_URL = 'https://api.openai.com/v1/chat/completions';
 const OPENAI_WHISPER_URL = 'https://api.openai.com/v1/audio/transcriptions';
 const OPENAI_TTS_URL = 'https://api.openai.com/v1/audio/speech';
 
+// FIXED: Type definitions for API responses
+interface OpenAIMessage {
+  role: string;
+  content: string;
+}
+
+interface OpenAIChoice {
+  message?: OpenAIMessage;
+  text?: string;
+}
+
+interface OpenAIResponse {
+  choices?: OpenAIChoice[];
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
+  text?: string;
+}
+
+interface WhisperResponse {
+  text: string;
+}
+
 // Helper to determine if user is premium
 async function isPremiumUser(req: Request): Promise<boolean> {
   // Check if user has premium subscription via RevenueCat
@@ -134,7 +159,8 @@ router.post('/chat', verifyToken, async (req: Request, res: Response, next) => {
       return;
     }
 
-    const data = await response.json();
+    // FIXED: Properly type the response
+    const data = await response.json() as OpenAIResponse;
 
     res.json({
       success: true,
@@ -215,7 +241,8 @@ router.post('/voice/transcribe', verifyToken, async (req: Request, res: Response
       return;
     }
 
-    const data = await response.json();
+    // FIXED: Properly type the response
+    const data = await response.json() as WhisperResponse;
 
     res.json({
       success: true,
@@ -381,7 +408,8 @@ Guidelines:
       return;
     }
 
-    const data = await response.json();
+    // FIXED: Properly type the response
+    const data = await response.json() as OpenAIResponse;
     const quote = data.choices?.[0]?.message?.content?.trim() || '';
 
     res.json({
