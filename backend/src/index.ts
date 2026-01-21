@@ -1,6 +1,3 @@
-/**
- * 🛡️ KWO Production Backend (Integrated & Stabilized)
- */
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -20,18 +17,20 @@ const PORT = process.env.PORT || 3001;
 app.use(helmet());
 app.use(express.json({ limit: '10mb' }));
 app.use(cors({ origin: '*', credentials: true }));
-// Rate Limiting
-app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 1000 }));
-// Public Routes
-app.get('/health', (req, res) => res.json({ status: 'ok' }));
-/**
- * 🛡️ Router Mapping
- */
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 1000,
+  message: { error: 'Too many requests, please try again later.' }
+});
+app.use(limiter);
+// Health Check
+app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
+// Routes
 app.use('/auth', authRoutes);
-app.use('/user', userRoutes); // Handles /api/profile and /api/devices
+app.use('/user', userRoutes);
 app.use('/admin', verifyToken, requireAdmin, adminRoutes);
 app.use('/api/partners', partnersRoutes);
-app.use('/api/chat', chatRoutes);      // Handles /api/chat/messages and /api/chat/send
-app.use('/api/check-ins', checkinRoutes); // Handles /api/check-ins/list and create
-app.listen(PORT, () => console.log(`🚀 Production Backend Live`));
+app.use('/api/chat', chatRoutes);
+app.use('/api/check-ins', checkinRoutes);
+app.listen(PORT, () => console.log(`🚀 Production Backend Live on port ${PORT}`));
 export default app;
