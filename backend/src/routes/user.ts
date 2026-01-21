@@ -1,8 +1,10 @@
-import { Router, Request, Response } from 'express';
 import { verifyToken, requireOwnership, requireAdmin } from '../middleware/auth.js';
 import { validateProfileUpdate, validateUserId, escapeHtml, sanitizeString } from '../utils/validation.js';
+import { createClient } from '@supabase/supabase-js';
 
-const router = Router();
+const getSupabase = () => {
+  return createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+};
 
 // Mock user database
 const mockUserProfiles: Record<string, {
@@ -238,6 +240,50 @@ router.put('/:userId/settings', verifyToken, requireOwnership, (req: Request, re
       error: 'Failed to update settings',
       code: 'UPDATE_SETTINGS_ERROR'
     });
+  }
+});
+
+/**
+ * SUPABASE DRIVEN ENDPOINTS (Migrated from index.ts)
+ */
+
+router.post('/get', verifyToken, async (req: Request, res: Response) => {
+  try {
+    const { data, error } = await getSupabase()
+      .from('user_profiles')
+      .select('*')
+      .eq('user_id', req.user!.id)
+      .single();
+    if (error) throw error;
+    res.json({ success: true, data });
+  } catch (error: any) {
+    res.status(400).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/update', verifyToken, async (req: Request, res: Response) => {
+  try {
+    const { data, error } = await getSupabase()
+      .from('user_profiles')
+      .update(req.body)
+      .eq('user_id', req.user!.id);
+    if (error) throw error;
+    res.json({ success: true, data });
+  } catch (error: any) {
+    res.status(400).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/devices/register', verifyToken, async (req: Request, res: Response) => {
+  try {
+    const { expo_push_token, device_type } = req.body;
+    const { data, error } = await getSupabase()
+      .from('user_devices')
+      .upsert({ user_id: req.user!.id, expo_push_token, device_type }, { onConflict: 'user_id' });
+    if (error) throw error;
+    res.json({ success: true, data });
+  } catch (error: any) {
+    res.status(400).json({ success: false, error: error.message });
   }
 });
 
