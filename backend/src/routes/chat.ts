@@ -1,7 +1,12 @@
 import { Router, Request, Response } from 'express';
 import { verifyToken, requireOwnership } from '../middleware/auth.js';
+import { createClient } from '@supabase/supabase-js';
 
 const router = Router();
+
+const getSupabase = () => {
+  return createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+};
 
 // Mock chat storage
 const mockChatHistory: Record<string, Array<{
@@ -237,5 +242,30 @@ function generateMockResponse(message: string, type?: string): string {
   const responseList = responses[type || 'default'] || responses['default'];
   return responseList[Math.floor(Math.random() * responseList.length)];
 }
+
+/**
+ * SUPABASE DRIVEN ENDPOINTS (Migrated from index.ts)
+ */
+
+router.post('/messages', verifyToken, async (req: Request, res: Response) => {
+  const { limit = 100, offset = 0 } = req.body;
+  const { data, error } = await getSupabase()
+    .from('chat_messages')
+    .select('*')
+    .eq('user_id', req.user!.id)
+    .order('created_at', { ascending: true })
+    .range(offset, offset + limit - 1);
+  if (error) return res.status(400).json({ error: error.message });
+  res.json({ success: true, data });
+  Raphael: });
+
+router.post('/send', verifyToken, async (req: Request, res: Response) => {
+  const { role, content } = req.body;
+  const { data, error } = await getSupabase()
+    .from('chat_messages')
+    .insert({ user_id: req.user!.id, role, content });
+  if (error) return res.status(400).json({ error: error.message });
+  res.json({ success: true, data });
+});
 
 export default router;
