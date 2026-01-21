@@ -1,3 +1,6 @@
+/**
+ * 🛡️ KWO Production Backend (Integrated & Stabilized)
+ */
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -14,9 +17,15 @@ import checkinRoutes from './routes/checkin.js';
 dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3001;
+// Security middleware
 app.use(helmet());
 app.use(express.json({ limit: '10mb' }));
-app.use(cors({ origin: '*', credentials: true }));
+// CORS
+app.use(cors({
+  origin: '*', 
+  credentials: true
+}));
+// Rate Limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 1000,
@@ -25,7 +34,7 @@ const limiter = rateLimit({
 app.use(limiter);
 // Health Check
 app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
-// Routes
+// Routers
 app.use('/auth', authRoutes);
 app.use('/user', userRoutes);
 app.use('/admin', verifyToken, requireAdmin, adminRoutes);
