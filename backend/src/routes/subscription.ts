@@ -15,6 +15,32 @@ const router = Router();
 const REVENUECAT_SECRET_KEY = process.env.REVENUECAT_SECRET_KEY;
 const REVENUECAT_API_URL = 'https://api.revenuecat.com/v1';
 
+// FIXED: Type definitions for RevenueCat responses
+interface RevenueCatEntitlement {
+  expires_date: string;
+  product_identifier: string;
+  purchase_date: string;
+}
+
+interface RevenueCatSubscription {
+  expires_date: string;
+  purchase_date: string;
+  original_purchase_date: string;
+  store: string;
+  unsubscribe_detected_at?: string;
+}
+
+interface RevenueCatSubscriber {
+  entitlements: Record<string, RevenueCatEntitlement>;
+  subscriptions: Record<string, RevenueCatSubscription>;
+  original_app_user_id: string;
+  original_application_version?: string;
+}
+
+interface RevenueCatResponse {
+  subscriber: RevenueCatSubscriber;
+}
+
 /**
  * POST /subscription/verify
  * Verify user's subscription status server-side
@@ -87,7 +113,8 @@ router.post('/verify', verifyToken, async (req: Request, res: Response): Promise
       return;
     }
 
-    const data = await response.json();
+    // FIXED: Properly type the response
+    const data = await response.json() as RevenueCatResponse;
     const subscriber = data.subscriber;
 
     // Check if user has the requested entitlement
@@ -106,19 +133,15 @@ router.post('/verify', verifyToken, async (req: Request, res: Response): Promise
     }> = {};
 
     for (const [productId, subscription] of Object.entries(subscriptions)) {
-      const sub = subscription as {
-        expires_date: string;
-        unsubscribe_detected_at?: string;
-      };
-      const expiresDate = new Date(sub.expires_date);
+      const expiresDate = new Date(subscription.expires_date);
       const isActive = expiresDate > new Date();
 
       if (isActive) {
         activeSubscriptions[productId] = {
           productId,
-          expiresDate: sub.expires_date,
+          expiresDate: subscription.expires_date,
           isActive: true,
-          willRenew: !sub.unsubscribe_detected_at
+          willRenew: !subscription.unsubscribe_detected_at
         };
       }
     }
