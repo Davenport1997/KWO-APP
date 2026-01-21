@@ -1,27 +1,22 @@
 import { Router, Request, Response } from 'express';
 import { createClient } from '@supabase/supabase-js';
 import { verifyToken } from '../middleware/auth.js';
-
 const router = Router();
-
 /**
  * Helper to get Supabase client lazily
+ * This prevents the server from crashing on startup!
  */
 const getSupabase = () => {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
   if (!url || !key) {
-    throw new Error('Missing Supabase configuration: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY');
+    throw new Error('Missing Supabase configuration: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not set');
   }
-
   return createClient(url, key);
 };
-
 // =============================================================================
 // TYPE DEFINITIONS
 // =============================================================================
-
 interface PartnerRecord {
   id: string;
   user_id: string;
@@ -38,19 +33,13 @@ interface PartnerRecord {
   added_at: string;
   updated_at: string;
 }
-
 // =============================================================================
 // HELPER FUNCTIONS
 // =============================================================================
-
-/**
- * Extract user ID from JWT token
- */
 const getUserIdFromToken = (authHeader: string | undefined): string | null => {
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return null;
   }
-
   try {
     const token = authHeader.substring(7);
     const decoded = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
@@ -59,41 +48,22 @@ const getUserIdFromToken = (authHeader: string | undefined): string | null => {
     return null;
   }
 };
-
 // =============================================================================
 // ROUTES
 // =============================================================================
-
-/**
- * POST /api/partners/add
- * Add a new accountability partner
- * Requires: Authorization header with valid JWT token
- */
 router.post('/add', async (req: Request, res: Response): Promise<void> => {
   try {
     const { user_id, partner_phone, partner_name, relationship, notification_preferences } = req.body;
-
-    // Validate required fields
     if (!user_id || !partner_phone || !partner_name || !relationship) {
-      res.status(400).json({
-        success: false,
-        error: 'Missing required fields'
-      });
+      res.status(400).json({ success: false, error: 'Missing required fields' });
       return;
     }
-
-    // Verify authorization
     const authHeader = req.headers.authorization;
     const tokenUserId = getUserIdFromToken(authHeader);
     if (!tokenUserId) {
-      res.status(401).json({
-        success: false,
-        error: 'Unauthorized'
-      });
+      res.status(401).json({ success: false, error: 'Unauthorized' });
       return;
     }
-
-    // Insert partner into database
     const { data, error } = await getSupabase()
       .from('accountability_partners')
       .insert({
@@ -111,288 +81,142 @@ router.post('/add', async (req: Request, res: Response): Promise<void> => {
       })
       .select()
       .single();
-
     if (error) {
-      console.error('[Partners API] Error adding partner:', error);
-
-      // Handle duplicate partner
       if (error.code === '23505') {
-        res.status(409).json({
-          success: false,
-          error: 'Partner with this phone number already added'
-        });
+        res.status(409).json({ success: false, error: 'Partner already added' });
         return;
       }
-
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
+      res.status(500).json({ success: false, error: error.message });
       return;
     }
-
-    res.status(200).json({
-      success: true,
-      id: data.id,
-      partner: data
-    });
+    res.status(200).json({ success: true, id: data.id, partner: data });
   } catch (error: any) {
-    console.error('[Partners API] Unexpected error in addPartner:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message || 'Internal server error'
-    });
+    res.status(500).json({ success: false, error: error.message || 'Internal server error' });
   }
 });
-
-/**
- * POST /api/partners/list
- * Get all partners for a user
- * Requires: Authorization header with valid JWT token
- */
 router.post('/list', async (req: Request, res: Response): Promise<void> => {
   try {
     const { user_id } = req.body;
-
     if (!user_id) {
-      res.status(400).json({
-        success: false,
-        error: 'Missing user_id'
-      });
+      res.status(400).json({ success: false, error: 'Missing user_id' });
       return;
     }
-
-    // Verify authorization
     const authHeader = req.headers.authorization;
     const tokenUserId = getUserIdFromToken(authHeader);
     if (!tokenUserId) {
-      res.status(401).json({
-        success: false,
-        error: 'Unauthorized'
-      });
+      res.status(401).json({ success: false, error: 'Unauthorized' });
       return;
     }
-
     const { data, error } = await getSupabase()
       .from('accountability_partners')
       .select('*')
       .eq('user_id', user_id)
       .order('added_at', { ascending: false });
-
     if (error) {
-      console.error('[Partners API] Error listing partners:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
+      res.status(500).json({ success: false, error: error.message });
       return;
     }
-
     res.status(200).json(data || []);
   } catch (error: any) {
-    console.error('[Partners API] Unexpected error in listPartners:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message || 'Internal server error'
-    });
+    res.status(500).json({ success: false, error: error.message || 'Internal server error' });
   }
 });
-
-/**
- * POST /api/partners/find
- * Find a partner by phone number (for partner portal login)
- * IMPORTANT: This endpoint does NOT require authentication
- */
 router.post('/find', async (req: Request, res: Response): Promise<void> => {
   try {
     const { partner_phone } = req.body;
-
     if (!partner_phone) {
-      res.status(400).json({
-        success: false,
-        error: 'Missing partner_phone'
-      });
+      res.status(400).json({ success: false, error: 'Missing partner_phone' });
       return;
     }
-
-    // Clean phone number
     const cleanPhone = partner_phone.toString().replace(/[\s\-\(\)]/g, '');
-
     const { data, error } = await getSupabase()
       .from('accountability_partners')
       .select('*')
       .eq('partner_phone', cleanPhone)
       .single();
-
     if (error) {
       if (error.code === 'PGRST116') {
-        // No rows found
-        res.status(404).json({
-          success: false,
-          error: 'Phone number not found. Make sure you were added as an accountability partner.'
-        });
+        res.status(404).json({ success: false, error: 'Phone number not found' });
         return;
       }
-
-      console.error('[Partners API] Error finding partner:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
+      res.status(500).json({ success: false, error: error.message });
       return;
     }
-
     res.status(200).json(data);
   } catch (error: any) {
-    console.error('[Partners API] Unexpected error in findPartnerByPhone:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message || 'Internal server error'
-    });
+    res.status(500).json({ success: false, error: error.message || 'Internal server error' });
   }
 });
-
-/**
- * POST /api/partners/update
- * Update a partner's details
- * Requires: Authorization header with valid JWT token
- */
 router.post('/update', async (req: Request, res: Response): Promise<void> => {
   try {
     const { partner_id, user_id, updates } = req.body;
-
     if (!partner_id || !user_id || !updates) {
-      res.status(400).json({
-        success: false,
-        error: 'Missing required fields'
-      });
+      res.status(400).json({ success: false, error: 'Missing required fields' });
       return;
     }
-
-    // Verify authorization
     const authHeader = req.headers.authorization;
     const tokenUserId = getUserIdFromToken(authHeader);
     if (!tokenUserId) {
-      res.status(401).json({
-        success: false,
-        error: 'Unauthorized'
-      });
+      res.status(401).json({ success: false, error: 'Unauthorized' });
       return;
     }
-
-    // Verify partner belongs to user
     const { data: existingPartner } = await getSupabase()
       .from('accountability_partners')
       .select('user_id')
       .eq('id', partner_id)
       .single();
-
     if (!existingPartner || existingPartner.user_id !== user_id) {
-      res.status(403).json({
-        success: false,
-        error: 'Unauthorized - partner does not belong to user'
-      });
+      res.status(403).json({ success: false, error: 'Unauthorized' });
       return;
     }
-
-    // Update partner
     const { data, error } = await getSupabase()
       .from('accountability_partners')
       .update(updates)
       .eq('id', partner_id)
       .select()
       .single();
-
     if (error) {
-      console.error('[Partners API] Error updating partner:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
+      res.status(500).json({ success: false, error: error.message });
       return;
     }
-
-    res.status(200).json({
-      success: true,
-      partner: data
-    });
+    res.status(200).json({ success: true, partner: data });
   } catch (error: any) {
-    console.error('[Partners API] Unexpected error in updatePartner:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message || 'Internal server error'
-    });
+    res.status(500).json({ success: false, error: error.message || 'Internal server error' });
   }
 });
-
-/**
- * POST /api/partners/remove
- * Remove a partner
- * Requires: Authorization header with valid JWT token
- */
 router.post('/remove', async (req: Request, res: Response): Promise<void> => {
   try {
     const { partner_id, user_id } = req.body;
-
     if (!partner_id || !user_id) {
-      res.status(400).json({
-        success: false,
-        error: 'Missing required fields'
-      });
+      res.status(400).json({ success: false, error: 'Missing fields' });
       return;
     }
-
-    // Verify authorization
     const authHeader = req.headers.authorization;
     const tokenUserId = getUserIdFromToken(authHeader);
     if (!tokenUserId) {
-      res.status(401).json({
-        success: false,
-        error: 'Unauthorized'
-      });
+      res.status(401).json({ success: false, error: 'Unauthorized' });
       return;
     }
-
-    // Verify partner belongs to user
     const { data: existingPartner } = await getSupabase()
       .from('accountability_partners')
       .select('user_id')
       .eq('id', partner_id)
       .single();
-
     if (!existingPartner || existingPartner.user_id !== user_id) {
-      res.status(403).json({
-        success: false,
-        error: 'Unauthorized - partner does not belong to user'
-      });
+      res.status(403).json({ success: false, error: 'Forbidden' });
       return;
     }
-
-    // Delete partner
     const { error } = await getSupabase()
       .from('accountability_partners')
       .delete()
       .eq('id', partner_id);
-
     if (error) {
-      console.error('[Partners API] Error removing partner:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
+      res.status(500).json({ success: false, error: error.message });
       return;
     }
-
-    res.status(200).json({
-      success: true
-    });
+    res.status(200).json({ success: true });
   } catch (error: any) {
-    console.error('[Partners API] Unexpected error in removePartner:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message || 'Internal server error'
-    });
+    res.status(500).json({ success: false, error: error.message || 'Internal server error' });
   }
 });
-
 export default router;
