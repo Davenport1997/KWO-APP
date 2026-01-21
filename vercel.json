@@ -8,12 +8,20 @@
     ],
     "routes": [
         {
+            "src": "/api/auth/(.*)",
+            "dest": "backend/src/index.ts"
+        },
+        {
+            "src": "/auth/(.*)",
+            "dest": "backend/src/index.ts"
+        },
+        {
             "src": "/api/(.*)",
             "dest": "backend/src/index.ts"
         },
         {
-            "src": "/(.*)",
-            "dest": "/index.html"
+            "src": "/health",
+            "dest": "backend/src/index.ts"
         }
     ]
 }
