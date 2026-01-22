@@ -1,6 +1,6 @@
 {
-  "buildCommand": "npm run build",
-  "outputDirectory": "dist",
+  "version": 2,
+  "buildCommand": "cd backend && npm install && npm run build",
   "installCommand": "npm install",
-  "framework": null
+  "outputDirectory": "backend/dist"
 }
