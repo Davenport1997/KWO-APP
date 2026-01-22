@@ -24,9 +24,9 @@ import {
   invalidateUserCache,
   getAllCacheStats,
   clearAllCaches
-} from './utils/cache';
-import adminRoutes from './routes/admin';
-import partnersRoutes from './routes/partners';
+} from './utils/cache.js';
+import adminRoutes from './routes/admin.js';
+import partnersRoutes from './routes/partners.js';
 
 dotenv.config();
 
@@ -70,29 +70,6 @@ if (!supabaseUrl || !supabaseServiceKey) {
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
 /**
- * JWT Verification Middleware
- */
-interface AuthenticatedRequest extends express.Request {
-  user?: { id: string; email: string };
-  token?: string;
-}
-
-// Add verifyToken middleware function
-function verifyToken(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
-  const authHeader = req.headers.authorization;
-
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Missing authorization header' });
-  }
-
-  const token = authHeader.substring(7);
-  req.token = token;
-
-  // Token verification logic here
-  next();
-}
-
-/**
  * Health Check (PUBLIC - no auth required)
  */
 app.get('/health', (req, res) => {
@@ -124,8 +101,22 @@ app.post('/admin/cache/clear', verifyToken, (req: AuthenticatedRequest, res) => 
   });
 });
 
+/**
+ * JWT Verification Middleware
+ */
+interface AuthenticatedRequest extends express.Request {
+  user?: { id: string; email: string };
+  token?: string;
+}
+
 app.use(async (req: AuthenticatedRequest, res, next) => {
-  console.log(`📨 ${req.method} ${req.path}`);
+  console.log(`🔨 ${req.method} ${req.path}`);
+
+  // Skip auth for /api/partners routes (uses device ID, not JWT)
+  if (req.path.startsWith('/api/partners')) {
+    console.log('✅ Skipping auth for /api/partners (uses device ID)');
+    return next();
+  }
 
   const authHeader = req.headers.authorization;
 
@@ -201,6 +192,14 @@ async function logAudit(
   }
 }
 
+// Middleware for requiring user auth
+function verifyToken(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
+  if (!req.user) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  next();
+}
+
 
 /**
  * User Profile
@@ -247,7 +246,7 @@ app.post('/api/profile/get', async (req: AuthenticatedRequest, res) => {
 app.post('/api/profile/update', async (req: AuthenticatedRequest, res) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
-  console.log(`🔄 Updating profile for user ${req.user.id}:`, req.body);
+  console.log(`📝 Updating profile for user ${req.user.id}:`, req.body);
 
   try {
     const { data, error } = await supabase
