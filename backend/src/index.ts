@@ -45,7 +45,7 @@ app.use(express.json({ limit: '10mb' }));
 
 app.use(
   cors({
-    origin: process.env.CORS_ORIGIN || [
+    origin: process.env.CORS_ORIGIN?.split(',') || [
       'http://localhost:8081',
       'https://yourapp.com'
     ],
@@ -85,6 +85,9 @@ interface AuthenticatedRequest extends express.Request {
   user?: {
     id: string;
     email: string;
+    role?: 'free_user' | 'premium_user' | 'admin';
+    iat?: number;
+    exp?: number;
   };
   token?: string;
 }
@@ -108,9 +111,8 @@ app.get('/health', (_req, res) => {
 /*                         Authentication Middleware                           */
 /* -------------------------------------------------------------------------- */
 
-app.use(async (req: AuthenticatedRequest, res, next) => {
+async function verifyToken(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
   const authHeader = req.headers.authorization;
-
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'Missing authorization header' });
   }
@@ -123,18 +125,11 @@ app.use(async (req: AuthenticatedRequest, res, next) => {
       headers: { Authorization: `Bearer ${token}` }
     });
 
-    if (!response.ok) {
-      return res.status(401).json({ error: 'Invalid or expired token' });
-    }
+    if (!response.ok) return res.status(401).json({ error: 'Invalid or expired token' });
 
-    const userData = (await response.json()) as {
-      id?: string;
-      email?: string;
-    };
+    const userData = (await response.json()) as { id?: string; email?: string };
 
-    if (!userData.id) {
-      return res.status(401).json({ error: 'Invalid user token' });
-    }
+    if (!userData.id) return res.status(401).json({ error: 'Invalid user token' });
 
     req.user = {
       id: userData.id,
@@ -146,7 +141,7 @@ app.use(async (req: AuthenticatedRequest, res, next) => {
     console.error('Auth error:', err);
     res.status(401).json({ error: 'Authentication failed' });
   }
-});
+}
 
 /* -------------------------------------------------------------------------- */
 /*                           Per-User Rate Limit                               */
@@ -164,33 +159,30 @@ app.use(userLimiter);
 /*                               Admin Routes                                 */
 /* -------------------------------------------------------------------------- */
 
-app.get('/admin/cache-stats', (_req, res) => {
+app.get('/admin/cache-stats', verifyToken, (_req, res) => {
   res.json({
     success: true,
     data: getAllCacheStats()
   });
 });
 
-app.post('/admin/cache-clear', (_req, res) => {
+app.post('/admin/cache-clear', verifyToken, (_req, res) => {
   clearAllCaches();
   res.json({ success: true });
 });
 
-app.use('/admin', adminRoutes);
+app.use('/admin', verifyToken, adminRoutes);
 
 /* -------------------------------------------------------------------------- */
 /*                               Profile APIs                                 */
 /* -------------------------------------------------------------------------- */
 
-app.post('/api/profile/get', async (req: AuthenticatedRequest, res) => {
+app.post('/api/profile/get', verifyToken, async (req: AuthenticatedRequest, res) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
   const cacheKey = generateCacheKey('user', req.user.id, 'profile');
-
   const cached = userProfileCache.get(cacheKey);
-  if (cached) {
-    return res.json({ success: true, data: cached, cached: true });
-  }
+  if (cached) return res.json({ success: true, data: cached, cached: true });
 
   const { data, error } = await supabase
     .from('user_profiles')
@@ -198,16 +190,14 @@ app.post('/api/profile/get', async (req: AuthenticatedRequest, res) => {
     .eq('user_id', req.user.id)
     .single();
 
-  if (error) {
-    return res.status(400).json({ error: error.message });
-  }
+  if (error) return res.status(400).json({ error: error.message });
 
   userProfileCache.set(cacheKey, data, CACHE_TTLS.USER_PROFILE);
 
   res.json({ success: true, data, cached: false });
 });
 
-app.post('/api/profile/update', async (req: AuthenticatedRequest, res) => {
+app.post('/api/profile/update', verifyToken, async (req: AuthenticatedRequest, res) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
   const { error, data } = await supabase
@@ -215,9 +205,7 @@ app.post('/api/profile/update', async (req: AuthenticatedRequest, res) => {
     .update(req.body)
     .eq('user_id', req.user.id);
 
-  if (error) {
-    return res.status(400).json({ error: error.message });
-  }
+  if (error) return res.status(400).json({ error: error.message });
 
   invalidateUserCache(req.user.id);
 
@@ -225,29 +213,24 @@ app.post('/api/profile/update', async (req: AuthenticatedRequest, res) => {
 });
 
 /* -------------------------------------------------------------------------- */
-/*                           Partners / Chat / Devices                         */
+/*                           Partners Routes                                   */
 /* -------------------------------------------------------------------------- */
 
-app.use('/api/partners', partnersRoutes);
+app.use('/api/partners', verifyToken, partnersRoutes);
 
 /* -------------------------------------------------------------------------- */
 /*                               Error Handler                                 */
 /* -------------------------------------------------------------------------- */
 
 app.use(
-  (
-    err: any,
-    _req: express.Request,
-    res: express.Response,
-    _next: express.NextFunction
-  ) => {
+  (err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     console.error('Unhandled error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 );
 
 /* -------------------------------------------------------------------------- */
-/*                         IMPORTANT FOR VERCEL                                */
+/*                         Export for Vercel                                   */
 /* -------------------------------------------------------------------------- */
 
 export default app;
