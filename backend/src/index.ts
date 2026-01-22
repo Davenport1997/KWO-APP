@@ -24,9 +24,9 @@ import {
   invalidateUserCache,
   getAllCacheStats,
   clearAllCaches
-} from './utils/cache.js';
-import adminRoutes from './routes/admin.js';
-import partnersRoutes from './routes/partners.js';
+} from './utils/cache.';
+import adminRoutes from './routes/admin.';
+import partnersRoutes from './routes/partners.';
 
 dotenv.config();
 
