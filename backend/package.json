@@ -2,12 +2,12 @@
   "name": "kwo-backend",
   "version": "1.0.0",
   "description": "Secure Express backend for KWO app",
-  "main": "dist/index.js",
+  "main": "dist/index.",
   "type": "module",
   "scripts": {
     "dev": "tsx src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/index."
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.28.0",
