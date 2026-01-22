@@ -25,7 +25,7 @@ import {
   getAllCacheStats,
   clearAllCaches
 } from './utils/cache.js';
-import adminRoutes from './routes/admin.js';
+import adminRoutes from './routes/admin';
 import partnersRoutes from './routes/partners.js';
 
 dotenv.config();
