@@ -24,9 +24,9 @@ import {
   invalidateUserCache,
   getAllCacheStats,
   clearAllCaches
-} from './utils/cache.js';
+} from './utils/cache';
 import adminRoutes from './routes/admin';
-import partnersRoutes from './routes/partners.js';
+import partnersRoutes from './routes/partners';
 
 dotenv.config();
 
@@ -70,6 +70,29 @@ if (!supabaseUrl || !supabaseServiceKey) {
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
 /**
+ * JWT Verification Middleware
+ */
+interface AuthenticatedRequest extends express.Request {
+  user?: { id: string; email: string };
+  token?: string;
+}
+
+// Add verifyToken middleware function
+function verifyToken(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Missing authorization header' });
+  }
+
+  const token = authHeader.substring(7);
+  req.token = token;
+
+  // Token verification logic here
+  next();
+}
+
+/**
  * Health Check (PUBLIC - no auth required)
  */
 app.get('/health', (req, res) => {
@@ -101,21 +124,13 @@ app.post('/admin/cache/clear', verifyToken, (req: AuthenticatedRequest, res) => 
   });
 });
 
-/**
- * JWT Verification Middleware
- */
-interface AuthenticatedRequest extends express.Request {
-  user?: { id: string; email: string };
-  token?: string;
-}
-
 app.use(async (req: AuthenticatedRequest, res, next) => {
-  console.log(`ðŸ“¨ ${req.method} ${req.path}`);
+  console.log(`📨 ${req.method} ${req.path}`);
 
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    console.log('âŒ Missing authorization header');
+    console.log('❌ Missing authorization header');
     return res.status(401).json({ error: 'Missing authorization header' });
   }
 
@@ -132,14 +147,14 @@ app.use(async (req: AuthenticatedRequest, res, next) => {
     });
 
     if (!response.ok) {
-      console.log('âŒ Token invalid or expired');
+      console.log('❌ Token invalid or expired');
       return res.status(401).json({ error: 'Invalid or expired token' });
     }
 
     const userData = (await response.json()) as { id?: string; email?: string };
 
     if (!userData.id) {
-      console.log('âŒ No user ID in token');
+      console.log('❌ No user ID in token');
       return res.status(401).json({ error: 'No user ID in token' });
     }
 
@@ -148,10 +163,10 @@ app.use(async (req: AuthenticatedRequest, res, next) => {
       email: userData.email || '',
     };
 
-    console.log(`âœ… User authenticated: ${req.user.id}`);
+    console.log(`✅ User authenticated: ${req.user.id}`);
     next();
   } catch (error) {
-    console.error('âŒ Token verification error:', error);
+    console.error('❌ Token verification error:', error);
     return res.status(401).json({ error: 'Token verification failed' });
   }
 });
@@ -232,7 +247,7 @@ app.post('/api/profile/get', async (req: AuthenticatedRequest, res) => {
 app.post('/api/profile/update', async (req: AuthenticatedRequest, res) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
-  console.log(`ðŸ“ Updating profile for user ${req.user.id}:`, req.body);
+  console.log(`🔄 Updating profile for user ${req.user.id}:`, req.body);
 
   try {
     const { data, error } = await supabase
@@ -241,11 +256,11 @@ app.post('/api/profile/update', async (req: AuthenticatedRequest, res) => {
       .eq('user_id', req.user.id);
 
     if (error) {
-      console.error('âŒ Supabase error updating profile:', error);
+      console.error('❌ Supabase error updating profile:', error);
       throw error;
     }
 
-    console.log('âœ… Profile updated successfully');
+    console.log('✅ Profile updated successfully');
 
     // Invalidate cache for this user
     invalidateUserCache(req.user.id);
@@ -254,7 +269,7 @@ app.post('/api/profile/update', async (req: AuthenticatedRequest, res) => {
     res.json({ success: true, data });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    console.error('âŒ Profile update error:', msg);
+    console.error('❌ Profile update error:', msg);
     await logAudit(req.user.id, 'update_profile', false, req.body, msg, req);
     res.status(400).json({ success: false, error: msg });
   }
@@ -467,8 +482,8 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`âœ… KWO Backend running on http://localhost:${PORT}`);
-  console.log(`ðŸ“¡ Make sure SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are set in .env`);
+  console.log(`✅ KWO Backend running on http://localhost:${PORT}`);
+  console.log(`📡 Make sure SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are set in .env`);
 });
 
 export default app;
