@@ -3,11 +3,13 @@
   "version": "1.0.0",
   "description": "Secure Express backend for KWO app",
   "main": "dist/index.js",
-  "type": "module",
   "scripts": {
     "dev": "tsx src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js"
+  },
+  "engines": {
+    "node": "18.x"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.28.0",
