@@ -7,9 +7,9 @@ import {
   generateRefreshToken,
   verifyRefreshToken,
   verifyToken
-} from '../middleware/auth.js';
-import { loginLimiter, signupLimiter } from '../middleware/rateLimiting.js';
-import { logRateLimitEvent } from '../utils/rateLimitMonitoring.js';
+} from '../middleware/auth';
+import { loginLimiter, signupLimiter } from '../middleware/rateLimiting';
+import { logRateLimitEvent } from '../utils/rateLimitMonitoring';
 
 const router = Router();
 
