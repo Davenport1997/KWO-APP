@@ -3,13 +3,14 @@
  * Cache management and monitoring endpoints
  */
 
-import { verifyToken } from '../middleware/auth';
+import { Router, Request, Response } from 'express';
+import { verifyToken } from '../middleware/auth.js';
 import {
   getAllCacheStats,
   clearAllCaches,
   invalidateUserCache,
   generateCacheKey
-} from '../utils/cache';
+} from '../utils/cache.js';
 
 const router = Router();
 
@@ -114,7 +115,8 @@ router.post('/cache/invalidate-user', verifyToken, requireAdmin, (req: Request, 
 router.post('/cache/warm', verifyToken, requireAdmin, async (req: Request, res: Response) => {
   try {
     // Import here to avoid circular dependency
- const { getAddictionFacts, getDailyChallenges, getMicroLessons } = await import('../utils/staticDataCache');
+    const { getAddictionFacts, getDailyChallenges, getMicroLessons } = await import('../utils/staticDataCache.js');
+
     console.log('[Admin] Warming up caches...');
 
     // Pre-load static data
