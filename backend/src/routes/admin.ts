@@ -3,14 +3,13 @@
  * Cache management and monitoring endpoints
  */
 
-import { Router, Request, Response } from 'express';
-import { verifyToken } from '../middleware/auth.js';
+import { verifyToken } from '../middleware/auth';
 import {
   getAllCacheStats,
   clearAllCaches,
   invalidateUserCache,
   generateCacheKey
-} from '../utils/cache.js';
+} from '../utils/cache';
 
 const router = Router();
 
