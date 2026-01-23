@@ -21,6 +21,11 @@ import {
   validateTTSRequest,
   containsPromptInjection
 } from '../utils/validation.js';
+import {
+  checkAISafety,
+  sanitizeAIResponse,
+  logSafetyViolation
+} from '../utils/aiSafetyFilter.js';
 
 const router = Router();
 
@@ -35,31 +40,6 @@ const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 const OPENAI_CHAT_URL = 'https://api.openai.com/v1/chat/completions';
 const OPENAI_WHISPER_URL = 'https://api.openai.com/v1/audio/transcriptions';
 const OPENAI_TTS_URL = 'https://api.openai.com/v1/audio/speech';
-
-// FIXED: Type definitions for API responses
-interface OpenAIMessage {
-  role: string;
-  content: string;
-}
-
-interface OpenAIChoice {
-  message?: OpenAIMessage;
-  text?: string;
-}
-
-interface OpenAIResponse {
-  choices?: OpenAIChoice[];
-  usage?: {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
-  };
-  text?: string;
-}
-
-interface WhisperResponse {
-  text: string;
-}
 
 // Helper to determine if user is premium
 async function isPremiumUser(req: Request): Promise<boolean> {
@@ -122,14 +102,20 @@ router.post('/chat', verifyToken, async (req: Request, res: Response, next) => {
     const max_tokens = (validation.sanitized.max_tokens as number) || 300;
     const temperature = (validation.sanitized.temperature as number) || 1;
 
-    // Log potential prompt injection attempts (but don't block - may be false positives)
+    // SECURITY: Block prompt injection attempts
     const userMessages = messages.filter(m => m.role === 'user');
     for (const msg of userMessages) {
       if (containsPromptInjection(msg.content)) {
-        console.warn('[SECURITY] Potential prompt injection detected:', {
+        console.warn('[SECURITY] Prompt injection BLOCKED:', {
           userId: (req as any).user?.id,
           timestamp: new Date().toISOString()
         });
+        res.status(400).json({
+          success: false,
+          error: 'Your message contains content that cannot be processed. Please rephrase your message.',
+          code: 'INVALID_MESSAGE_CONTENT'
+        });
+        return;
       }
     }
 
@@ -149,23 +135,42 @@ router.post('/chat', verifyToken, async (req: Request, res: Response, next) => {
     });
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      console.error('[AI] OpenAI chat error:', errorData);
+      let errorData: any = {};
+      try {
+        errorData = await response.json();
+      } catch (e) {
+        const text = await response.text();
+        errorData = { raw: text };
+      }
+      console.error('[AI] OpenAI chat error:', { status: response.status, error: errorData });
       res.status(response.status).json({
         success: false,
-        error: 'AI request failed',
+        error: errorData.error?.message || 'AI request failed',
         code: 'AI_REQUEST_FAILED'
       });
       return;
     }
 
-    // FIXED: Properly type the response
-    const data = await response.json() as OpenAIResponse;
+    const data = await response.json();
+    const rawContent = data.choices?.[0]?.message?.content || '';
+
+    // CRITICAL: Apply safety filter to AI response before sending to user
+    const safetyCheck = checkAISafety(rawContent);
+    const { sanitizedResponse, disclaimer, wasFiltered } = sanitizeAIResponse(rawContent, safetyCheck);
+
+    // Log safety violations for monitoring
+    if (!safetyCheck.isSafe) {
+      const userId = (req as any).user?.id || 'unknown';
+      const userMessage = messages[messages.length - 1]?.content || '';
+      logSafetyViolation(userId, safetyCheck, userMessage, rawContent);
+    }
 
     res.json({
       success: true,
       data: {
-        content: data.choices?.[0]?.message?.content || '',
+        content: sanitizedResponse,
+        disclaimer: disclaimer || undefined,
+        filtered: wasFiltered,
         usage: data.usage
       }
     });
@@ -241,8 +246,7 @@ router.post('/voice/transcribe', verifyToken, async (req: Request, res: Response
       return;
     }
 
-    // FIXED: Properly type the response
-    const data = await response.json() as WhisperResponse;
+    const data = await response.json();
 
     res.json({
       success: true,
@@ -408,8 +412,7 @@ Guidelines:
       return;
     }
 
-    // FIXED: Properly type the response
-    const data = await response.json() as OpenAIResponse;
+    const data = await response.json();
     const quote = data.choices?.[0]?.message?.content?.trim() || '';
 
     res.json({
