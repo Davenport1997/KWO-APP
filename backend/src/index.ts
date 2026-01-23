@@ -215,7 +215,7 @@ app.post('/api/profile/get', async (req: AuthenticatedRequest, res) => {
     let cachedData = userProfileCache.get(cacheKey);
     if (cachedData) {
       console.log(`[Cache HIT] Profile for user ${req.user.id}`);
-      await logAudit(req.user.id, 'get_profile', true, {}, null, req);
+      await logAudit(req.user.id, 'get_profile', true, {}, undefined, req);
       res.json({ success: true, data: cachedData, cached: true });
       return;
     }
@@ -235,7 +235,7 @@ app.post('/api/profile/get', async (req: AuthenticatedRequest, res) => {
       userProfileCache.set(cacheKey, data, CACHE_TTLS.USER_PROFILE);
     }
 
-    await logAudit(req.user.id, 'get_profile', true, {}, null, req);
+    await logAudit(req.user.id, 'get_profile', true, {}, undefined, req);
     res.json({ success: true, data, cached: false });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -265,7 +265,7 @@ app.post('/api/profile/update', async (req: AuthenticatedRequest, res) => {
     // Invalidate cache for this user
     invalidateUserCache(req.user.id);
 
-    await logAudit(req.user.id, 'update_profile', true, req.body, null, req);
+    await logAudit(req.user.id, 'update_profile', true, req.body, undefined, req);
     res.json({ success: true, data });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -293,7 +293,7 @@ app.post('/api/check-ins/list', async (req: AuthenticatedRequest, res) => {
 
     if (error) throw error;
 
-    await logAudit(req.user.id, 'get_check_ins', true, { limit, offset }, null, req);
+    await logAudit(req.user.id, 'get_check_ins', true, { limit, offset }, undefined, req);
     res.json({ success: true, data });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -316,7 +316,7 @@ app.post('/api/check-ins/create', async (req: AuthenticatedRequest, res) => {
 
     if (error) throw error;
 
-    await logAudit(req.user.id, 'create_check_in', true, req.body, null, req);
+    await logAudit(req.user.id, 'create_check_in', true, req.body, undefined, req);
     res.json({ success: true, data });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -352,7 +352,7 @@ app.post('/api/devices/register', async (req: AuthenticatedRequest, res) => {
 
     if (error) throw error;
 
-    await logAudit(req.user.id, 'register_device', true, { device_type }, null, req);
+    await logAudit(req.user.id, 'register_device', true, { device_type }, undefined, req);
     res.json({ success: true, data });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -373,7 +373,7 @@ app.post('/api/devices/get', async (req: AuthenticatedRequest, res) => {
 
     if (error && error.code !== 'PGRST116') throw error;
 
-    await logAudit(req.user.id, 'get_device', true, {}, null, req);
+    await logAudit(req.user.id, 'get_device', true, {}, undefined, req);
     res.json({ success: true, data });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -393,7 +393,7 @@ app.post('/api/devices/update-active', async (req: AuthenticatedRequest, res) =>
 
     if (error) throw error;
 
-    await logAudit(req.user.id, 'update_last_active', true, {}, null, req);
+    await logAudit(req.user.id, 'update_last_active', true, {}, undefined, req);
     res.json({ success: true, data });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -420,7 +420,7 @@ app.post('/api/chat/messages', async (req: AuthenticatedRequest, res) => {
 
     if (error) throw error;
 
-    await logAudit(req.user.id, 'get_chat_messages', true, { limit, offset }, null, req);
+    await logAudit(req.user.id, 'get_chat_messages', true, { limit, offset }, undefined, req);
     res.json({ success: true, data });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -450,7 +450,7 @@ app.post('/api/chat/send', async (req: AuthenticatedRequest, res) => {
 
     if (error) throw error;
 
-    await logAudit(req.user.id, 'create_chat_message', true, { role }, null, req);
+    await logAudit(req.user.id, 'create_chat_message', true, { role }, undefined, req);
     res.json({ success: true, data });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
