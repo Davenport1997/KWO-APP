@@ -9,7 +9,6 @@
  * - AI Voice: 3 calls/day (free), 10 calls/day (premium)
  * - Quote Generation: 10 per hour (free), 50 per hour (premium)
  */
-
 import { Router, Request, Response } from 'express';
 import { verifyToken } from '../middleware/auth.js';
 import { createAIChatLimiter, createAIVoiceLimiter } from '../middleware/rateLimiting.js';
@@ -26,44 +25,36 @@ import {
   sanitizeAIResponse,
   logSafetyViolation
 } from '../utils/aiSafetyFilter.js';
-
 const router = Router();
-
 // Get API keys from environment (server-side only)
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const GROK_API_KEY = process.env.GROK_API_KEY;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
-
 // OpenAI endpoints
 const OPENAI_CHAT_URL = 'https://api.openai.com/v1/chat/completions';
 const OPENAI_WHISPER_URL = 'https://api.openai.com/v1/audio/transcriptions';
 const OPENAI_TTS_URL = 'https://api.openai.com/v1/audio/speech';
-
 // Helper to determine if user is premium
 async function isPremiumUser(req: Request): Promise<boolean> {
   // Check if user has premium subscription via RevenueCat
   // In production, this would query RevenueCat API with the user's ID
   const userId = (req as any).user?.id;
-
   if (!userId) {
     return false;
   }
-
   // TODO: Implement actual RevenueCat verification
   // For now, always return false (assume free tier by default)
   // This ensures security: if premium status can't be verified, deny premium benefits
   return false;
 }
-
 /**
  * Check if AI services are configured
  */
 const isAIConfigured = (): boolean => {
   return !!(OPENAI_API_KEY || GROK_API_KEY || ANTHROPIC_API_KEY);
 };
-
 /**
  * POST /ai/chat
  * Proxy for OpenAI chat completions
@@ -84,7 +75,6 @@ router.post('/chat', verifyToken, async (req: Request, res: Response, next) => {
       });
       return;
     }
-
     // Validate input
     const validation = validateAIChatRequest(req.body);
     if (!validation.valid) {
@@ -96,12 +86,10 @@ router.post('/chat', verifyToken, async (req: Request, res: Response, next) => {
       });
       return;
     }
-
     const { messages } = validation.sanitized as { messages: Array<{ role: string; content: string }> };
     const model = (validation.sanitized.model as string) || 'gpt-4o';
     const max_tokens = (validation.sanitized.max_tokens as number) || 300;
     const temperature = (validation.sanitized.temperature as number) || 1;
-
     // SECURITY: Block prompt injection attempts
     const userMessages = messages.filter(m => m.role === 'user');
     for (const msg of userMessages) {
@@ -118,7 +106,6 @@ router.post('/chat', verifyToken, async (req: Request, res: Response, next) => {
         return;
       }
     }
-
     const response = await fetchWithTimeout(OPENAI_CHAT_URL, {
       method: 'POST',
       headers: {
@@ -133,7 +120,6 @@ router.post('/chat', verifyToken, async (req: Request, res: Response, next) => {
       }),
       timeout: 45000, // 45 seconds for AI operations
     });
-
     if (!response.ok) {
       let errorData: any = {};
       try {
@@ -150,22 +136,18 @@ router.post('/chat', verifyToken, async (req: Request, res: Response, next) => {
       });
       return;
     }
-
     const data = await response.json();
     // FIXED: Added 'as any' to bypass the TS unknown error
     const rawContent = (data as any).choices?.[0]?.message?.content || '';
-
     // CRITICAL: Apply safety filter to AI response before sending to user
     const safetyCheck = checkAISafety(rawContent);
     const { sanitizedResponse, disclaimer, wasFiltered } = sanitizeAIResponse(rawContent, safetyCheck);
-
     // Log safety violations for monitoring
     if (!safetyCheck.isSafe) {
       const userId = (req as any).user?.id || 'unknown';
       const userMessage = messages[messages.length - 1]?.content || '';
       logSafetyViolation(userId, safetyCheck, userMessage, rawContent);
     }
-
     res.json({
       success: true,
       data: {
@@ -185,7 +167,6 @@ router.post('/chat', verifyToken, async (req: Request, res: Response, next) => {
     });
   }
 });
-
 /**
  * POST /ai/voice/transcribe
  * Proxy for OpenAI Whisper transcription
@@ -206,9 +187,7 @@ router.post('/voice/transcribe', verifyToken, async (req: Request, res: Response
       });
       return;
     }
-
     const { audioBase64, language = 'en' } = req.body;
-
     if (!audioBase64) {
       res.status(400).json({
         success: false,
@@ -217,17 +196,14 @@ router.post('/voice/transcribe', verifyToken, async (req: Request, res: Response
       });
       return;
     }
-
     // Convert base64 to buffer
     const audioBuffer = Buffer.from(audioBase64, 'base64');
-
     // Create form data for Whisper API
     const formData = new FormData();
     const audioBlob = new Blob([audioBuffer], { type: 'audio/m4a' });
     formData.append('file', audioBlob, 'recording.m4a');
     formData.append('model', 'whisper-1');
     formData.append('language', language);
-
     const response = await fetchWithTimeout(OPENAI_WHISPER_URL, {
       method: 'POST',
       headers: {
@@ -236,7 +212,6 @@ router.post('/voice/transcribe', verifyToken, async (req: Request, res: Response
       body: formData,
       timeout: 45000, // 45 seconds for AI transcription
     });
-
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
       console.error('[AI] Whisper error:', errorData);
@@ -247,9 +222,7 @@ router.post('/voice/transcribe', verifyToken, async (req: Request, res: Response
       });
       return;
     }
-
     const data = await response.json();
-
     res.json({
       success: true,
       data: {
@@ -266,7 +239,6 @@ router.post('/voice/transcribe', verifyToken, async (req: Request, res: Response
     });
   }
 });
-
 /**
  * POST /ai/voice/synthesize
  * Proxy for OpenAI TTS
@@ -287,9 +259,7 @@ router.post('/voice/synthesize', verifyToken, async (req: Request, res: Response
       });
       return;
     }
-
     const { text, voice = 'nova' } = req.body;
-
     if (!text) {
       res.status(400).json({
         success: false,
@@ -298,7 +268,6 @@ router.post('/voice/synthesize', verifyToken, async (req: Request, res: Response
       });
       return;
     }
-
     const response = await fetchWithTimeout(OPENAI_TTS_URL, {
       method: 'POST',
       headers: {
@@ -313,7 +282,6 @@ router.post('/voice/synthesize', verifyToken, async (req: Request, res: Response
       }),
       timeout: 45000, // 45 seconds for AI voice synthesis
     });
-
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
       console.error('[AI] TTS error:', errorData);
@@ -324,11 +292,9 @@ router.post('/voice/synthesize', verifyToken, async (req: Request, res: Response
       });
       return;
     }
-
     // Convert response to base64
     const audioBuffer = await response.arrayBuffer();
     const base64Audio = Buffer.from(audioBuffer).toString('base64');
-
     res.json({
       success: true,
       data: {
@@ -345,7 +311,6 @@ router.post('/voice/synthesize', verifyToken, async (req: Request, res: Response
     });
   }
 });
-
 /**
  * POST /ai/generate-quote
  * Generate personalized motivational quote
@@ -369,25 +334,20 @@ router.post('/generate-quote', verifyToken, async (req: Request, res: Response, 
       });
       return;
     }
-
     const { userName, context, faithPreference, mood, language } = req.body;
-
     const systemPrompt = `You are a wise, compassionate source of inspiration for people in recovery.
 Generate a SHORT, powerful, original quote (1-2 sentences max) that feels like a sign from above.
-
 Context: ${JSON.stringify(context || {})}
 User: ${userName || 'Friend'}
 Faith preference: ${faithPreference || 'subtle'}
 Mood: ${mood || 'neutral'}
 Language: ${language || 'English'}
-
 Guidelines:
 - Be profound but not preachy
 - Feel personal
 - Be encouraging without toxic positivity
 - Keep it under 30 words
 - Respond ONLY with the quote text, nothing else.`;
-
     const response = await fetchWithTimeout(OPENAI_CHAT_URL, {
       method: 'POST',
       headers: {
@@ -402,7 +362,6 @@ Guidelines:
       }),
       timeout: 45000, // 45 seconds for quote generation
     });
-
     if (!response.ok) {
       // Return fallback on error
       res.json({
@@ -414,11 +373,9 @@ Guidelines:
       });
       return;
     }
-
     const data = await response.json();
     // FIXED: Added 'as any'
     const quote = (data as any).choices?.[0]?.message?.content?.trim() || '';
-
     res.json({
       success: true,
       data: {
@@ -437,7 +394,6 @@ Guidelines:
     });
   }
 });
-
 /**
  * GET /ai/status
  * Check if AI services are configured
@@ -458,5 +414,4 @@ router.get('/status', (req: Request, res: Response): void => {
     }
   });
 });
-
 export default router;
