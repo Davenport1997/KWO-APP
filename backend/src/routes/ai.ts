@@ -152,7 +152,8 @@ router.post('/chat', verifyToken, async (req: Request, res: Response, next) => {
     }
 
     const data = await response.json();
-    const rawContent = data.choices?.[0]?.message?.content || '';
+    // FIXED: Added 'as any' to bypass the TS unknown error
+    const rawContent = (data as any).choices?.[0]?.message?.content || '';
 
     // CRITICAL: Apply safety filter to AI response before sending to user
     const safetyCheck = checkAISafety(rawContent);
@@ -171,7 +172,8 @@ router.post('/chat', verifyToken, async (req: Request, res: Response, next) => {
         content: sanitizedResponse,
         disclaimer: disclaimer || undefined,
         filtered: wasFiltered,
-        usage: data.usage
+        // FIXED: Added 'as any'
+        usage: (data as any).usage
       }
     });
   } catch (error) {
@@ -251,7 +253,8 @@ router.post('/voice/transcribe', verifyToken, async (req: Request, res: Response
     res.json({
       success: true,
       data: {
-        text: data.text || ''
+        // FIXED: Added 'as any'
+        text: (data as any).text || ''
       }
     });
   } catch (error) {
@@ -413,7 +416,8 @@ Guidelines:
     }
 
     const data = await response.json();
-    const quote = data.choices?.[0]?.message?.content?.trim() || '';
+    // FIXED: Added 'as any'
+    const quote = (data as any).choices?.[0]?.message?.content?.trim() || '';
 
     res.json({
       success: true,
