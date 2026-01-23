@@ -29,6 +29,10 @@ import partnersRoutes from './routes/partners.js';
 dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// Trust Vercel proxy for rate limiting
+app.set('trust proxy', 1);
+
 // Security middleware
 app.use(helmet());
 app.use(express.json({ limit: '10mb' }));
@@ -50,7 +54,7 @@ app.use(globalLimiter);
  * MODIFIED: Changed user to 'any' to fix TS2430 build error
  */
 interface AuthenticatedRequest extends express.Request {
-  user?: any; 
+  user?: any;
   token?: string;
 }
 
