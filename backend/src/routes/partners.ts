@@ -1,18 +1,18 @@
 import { Router, Request, Response } from 'express';
 import { createClient } from '@supabase/supabase-js';
 import { verifyToken } from '../middleware/auth.js';
-
 const router = Router();
-
 // Initialize Supabase with service role key
+// FIXED: Changed to match SUPABASE_SERVICE_ROLE_KEY used in index.ts
 const supabaseUrl = process.env.SUPABASE_URL!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY!;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY!;
+if (!supabaseUrl || !supabaseServiceKey) {
+  console.error('[Partners] CRITICAL: Supabase credentials missing from environment');
+}
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
 // =============================================================================
 // TYPE DEFINITIONS
 // =============================================================================
-
 interface PartnerRecord {
   id: string;
   user_id: string;
@@ -29,11 +29,9 @@ interface PartnerRecord {
   added_at: string;
   updated_at: string;
 }
-
 // =============================================================================
 // HELPER FUNCTIONS
 // =============================================================================
-
 /**
  * Extract user ID from JWT token
  */
@@ -41,7 +39,6 @@ const getUserIdFromToken = (authHeader: string | undefined): string | null => {
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return null;
   }
-
   try {
     const token = authHeader.substring(7);
     const decoded = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
@@ -50,11 +47,9 @@ const getUserIdFromToken = (authHeader: string | undefined): string | null => {
     return null;
   }
 };
-
 // =============================================================================
 // ROUTES
 // =============================================================================
-
 /**
  * POST /api/partners/add
  * Add a new accountability partner
@@ -63,7 +58,6 @@ const getUserIdFromToken = (authHeader: string | undefined): string | null => {
 router.post('/add', async (req: Request, res: Response): Promise<void> => {
   try {
     const { user_id, partner_phone, partner_name, relationship, notification_preferences } = req.body;
-
     // Validate required fields
     if (!user_id || !partner_phone || !partner_name || !relationship) {
       res.status(400).json({
@@ -72,7 +66,6 @@ router.post('/add', async (req: Request, res: Response): Promise<void> => {
       });
       return;
     }
-
     // Verify authorization
     const authHeader = req.headers.authorization;
     const tokenUserId = getUserIdFromToken(authHeader);
@@ -83,9 +76,8 @@ router.post('/add', async (req: Request, res: Response): Promise<void> => {
       });
       return;
     }
-
     // Insert partner into database
-    const { data, error } = await supabase
+    const { data, error } = await (supabase
       .from('accountability_partners')
       .insert({
         user_id,
@@ -101,11 +93,9 @@ router.post('/add', async (req: Request, res: Response): Promise<void> => {
         invite_accepted: false,
       })
       .select()
-      .single();
-
+      .single() as any);
     if (error) {
       console.error('[Partners API] Error adding partner:', error);
-
       // Handle duplicate partner
       if (error.code === '23505') {
         res.status(409).json({
@@ -114,14 +104,12 @@ router.post('/add', async (req: Request, res: Response): Promise<void> => {
         });
         return;
       }
-
       res.status(500).json({
         success: false,
         error: error.message
       });
       return;
     }
-
     res.status(200).json({
       success: true,
       id: data.id,
@@ -135,7 +123,6 @@ router.post('/add', async (req: Request, res: Response): Promise<void> => {
     });
   }
 });
-
 /**
  * POST /api/partners/list
  * Get all partners for a user
@@ -144,7 +131,6 @@ router.post('/add', async (req: Request, res: Response): Promise<void> => {
 router.post('/list', async (req: Request, res: Response): Promise<void> => {
   try {
     const { user_id } = req.body;
-
     if (!user_id) {
       res.status(400).json({
         success: false,
@@ -152,7 +138,6 @@ router.post('/list', async (req: Request, res: Response): Promise<void> => {
       });
       return;
     }
-
     // Verify authorization
     const authHeader = req.headers.authorization;
     const tokenUserId = getUserIdFromToken(authHeader);
@@ -163,13 +148,11 @@ router.post('/list', async (req: Request, res: Response): Promise<void> => {
       });
       return;
     }
-
-    const { data, error } = await supabase
+    const { data, error } = await (supabase
       .from('accountability_partners')
       .select('*')
       .eq('user_id', user_id)
-      .order('added_at', { ascending: false });
-
+      .order('added_at', { ascending: false }) as any);
     if (error) {
       console.error('[Partners API] Error listing partners:', error);
       res.status(500).json({
@@ -178,7 +161,6 @@ router.post('/list', async (req: Request, res: Response): Promise<void> => {
       });
       return;
     }
-
     res.status(200).json(data || []);
   } catch (error: any) {
     console.error('[Partners API] Unexpected error in listPartners:', error);
@@ -188,7 +170,6 @@ router.post('/list', async (req: Request, res: Response): Promise<void> => {
     });
   }
 });
-
 /**
  * POST /api/partners/find
  * Find a partner by phone number (for partner portal login)
@@ -197,7 +178,6 @@ router.post('/list', async (req: Request, res: Response): Promise<void> => {
 router.post('/find', async (req: Request, res: Response): Promise<void> => {
   try {
     const { partner_phone } = req.body;
-
     if (!partner_phone) {
       res.status(400).json({
         success: false,
@@ -205,16 +185,13 @@ router.post('/find', async (req: Request, res: Response): Promise<void> => {
       });
       return;
     }
-
     // Clean phone number
     const cleanPhone = partner_phone.toString().replace(/[\s\-\(\)]/g, '');
-
-    const { data, error } = await supabase
+    const { data, error } = await (supabase
       .from('accountability_partners')
       .select('*')
       .eq('partner_phone', cleanPhone)
-      .single();
-
+      .single() as any);
     if (error) {
       if (error.code === 'PGRST116') {
         // No rows found
@@ -224,7 +201,6 @@ router.post('/find', async (req: Request, res: Response): Promise<void> => {
         });
         return;
       }
-
       console.error('[Partners API] Error finding partner:', error);
       res.status(500).json({
         success: false,
@@ -232,7 +208,6 @@ router.post('/find', async (req: Request, res: Response): Promise<void> => {
       });
       return;
     }
-
     res.status(200).json(data);
   } catch (error: any) {
     console.error('[Partners API] Unexpected error in findPartnerByPhone:', error);
@@ -242,7 +217,6 @@ router.post('/find', async (req: Request, res: Response): Promise<void> => {
     });
   }
 });
-
 /**
  * POST /api/partners/update
  * Update a partner's details
@@ -251,7 +225,6 @@ router.post('/find', async (req: Request, res: Response): Promise<void> => {
 router.post('/update', async (req: Request, res: Response): Promise<void> => {
   try {
     const { partner_id, user_id, updates } = req.body;
-
     if (!partner_id || !user_id || !updates) {
       res.status(400).json({
         success: false,
@@ -259,7 +232,6 @@ router.post('/update', async (req: Request, res: Response): Promise<void> => {
       });
       return;
     }
-
     // Verify authorization
     const authHeader = req.headers.authorization;
     const tokenUserId = getUserIdFromToken(authHeader);
@@ -270,30 +242,26 @@ router.post('/update', async (req: Request, res: Response): Promise<void> => {
       });
       return;
     }
-
     // Verify partner belongs to user
-    const { data: existingPartner } = await supabase
+    const { data: existingPartner } = await (supabase
       .from('accountability_partners')
       .select('user_id')
       .eq('id', partner_id)
-      .single();
-
-    if (!existingPartner || existingPartner.user_id !== user_id) {
+      .single() as any);
+    if (!existingPartner || (existingPartner as any).user_id !== user_id) {
       res.status(403).json({
         success: false,
         error: 'Unauthorized - partner does not belong to user'
       });
       return;
     }
-
     // Update partner
-    const { data, error } = await supabase
+    const { data, error } = await (supabase
       .from('accountability_partners')
       .update(updates)
       .eq('id', partner_id)
       .select()
-      .single();
-
+      .single() as any);
     if (error) {
       console.error('[Partners API] Error updating partner:', error);
       res.status(500).json({
@@ -302,7 +270,6 @@ router.post('/update', async (req: Request, res: Response): Promise<void> => {
       });
       return;
     }
-
     res.status(200).json({
       success: true,
       partner: data
@@ -315,7 +282,6 @@ router.post('/update', async (req: Request, res: Response): Promise<void> => {
     });
   }
 });
-
 /**
  * POST /api/partners/remove
  * Remove a partner
@@ -324,7 +290,6 @@ router.post('/update', async (req: Request, res: Response): Promise<void> => {
 router.post('/remove', async (req: Request, res: Response): Promise<void> => {
   try {
     const { partner_id, user_id } = req.body;
-
     if (!partner_id || !user_id) {
       res.status(400).json({
         success: false,
@@ -332,7 +297,6 @@ router.post('/remove', async (req: Request, res: Response): Promise<void> => {
       });
       return;
     }
-
     // Verify authorization
     const authHeader = req.headers.authorization;
     const tokenUserId = getUserIdFromToken(authHeader);
@@ -343,28 +307,24 @@ router.post('/remove', async (req: Request, res: Response): Promise<void> => {
       });
       return;
     }
-
     // Verify partner belongs to user
-    const { data: existingPartner } = await supabase
+    const { data: existingPartner } = await (supabase
       .from('accountability_partners')
       .select('user_id')
       .eq('id', partner_id)
-      .single();
-
-    if (!existingPartner || existingPartner.user_id !== user_id) {
+      .single() as any);
+    if (!existingPartner || (existingPartner as any).user_id !== user_id) {
       res.status(403).json({
         success: false,
         error: 'Unauthorized - partner does not belong to user'
       });
       return;
     }
-
     // Delete partner
-    const { error } = await supabase
+    const { error } = await (supabase
       .from('accountability_partners')
       .delete()
-      .eq('id', partner_id);
-
+      .eq('id', partner_id) as any);
     if (error) {
       console.error('[Partners API] Error removing partner:', error);
       res.status(500).json({
@@ -373,7 +333,6 @@ router.post('/remove', async (req: Request, res: Response): Promise<void> => {
       });
       return;
     }
-
     res.status(200).json({
       success: true
     });
@@ -385,5 +344,4 @@ router.post('/remove', async (req: Request, res: Response): Promise<void> => {
     });
   }
 });
-
 export default router;
