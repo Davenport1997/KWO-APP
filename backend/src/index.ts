@@ -24,9 +24,9 @@ import {
   invalidateUserCache,
   getAllCacheStats,
   clearAllCaches
-} from './utils/cache';
-import adminRoutes from './routes/admin';
-import partnersRoutes from './routes/partners';
+} from './utils/cache.js';
+import adminRoutes from './routes/admin.js';
+import partnersRoutes from './routes/partners.js';
 
 dotenv.config();
 
@@ -70,29 +70,6 @@ if (!supabaseUrl || !supabaseServiceKey) {
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
 /**
- * JWT Verification Middleware
- */
-interface AuthenticatedRequest extends express.Request {
-  user?: { id: string; email: string };
-  token?: string;
-}
-
-// Add verifyToken middleware function
-function verifyToken(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
-  const authHeader = req.headers.authorization;
-
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Missing authorization header' });
-  }
-
-  const token = authHeader.substring(7);
-  req.token = token;
-
-  // Token verification logic here
-  next();
-}
-
-/**
  * Health Check (PUBLIC - no auth required)
  */
 app.get('/health', (req, res) => {
@@ -124,8 +101,22 @@ app.post('/admin/cache/clear', verifyToken, (req: AuthenticatedRequest, res) => 
   });
 });
 
+/**
+ * JWT Verification Middleware
+ */
+interface AuthenticatedRequest extends express.Request {
+  user?: { id: string; email: string };
+  token?: string;
+}
+
 app.use(async (req: AuthenticatedRequest, res, next) => {
-  console.log(`📨 ${req.method} ${req.path}`);
+  console.log(`🔨 ${req.method} ${req.path}`);
+
+  // Skip auth for /api/partners routes (uses device ID, not JWT)
+  if (req.path.startsWith('/api/partners')) {
+    console.log('✅ Skipping auth for /api/partners (uses device ID)');
+    return next();
+  }
 
   const authHeader = req.headers.authorization;
 
@@ -201,6 +192,14 @@ async function logAudit(
   }
 }
 
+// Middleware for requiring user auth
+function verifyToken(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
+  if (!req.user) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  next();
+}
+
 
 /**
  * User Profile
@@ -215,7 +214,7 @@ app.post('/api/profile/get', async (req: AuthenticatedRequest, res) => {
     let cachedData = userProfileCache.get(cacheKey);
     if (cachedData) {
       console.log(`[Cache HIT] Profile for user ${req.user.id}`);
-      await logAudit(req.user.id, 'get_profile', true, {}, undefined, req);
+      await logAudit(req.user.id, 'get_profile', true, {}, null, req);
       res.json({ success: true, data: cachedData, cached: true });
       return;
     }
@@ -235,7 +234,7 @@ app.post('/api/profile/get', async (req: AuthenticatedRequest, res) => {
       userProfileCache.set(cacheKey, data, CACHE_TTLS.USER_PROFILE);
     }
 
-    await logAudit(req.user.id, 'get_profile', true, {}, undefined, req);
+    await logAudit(req.user.id, 'get_profile', true, {}, null, req);
     res.json({ success: true, data, cached: false });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -247,7 +246,7 @@ app.post('/api/profile/get', async (req: AuthenticatedRequest, res) => {
 app.post('/api/profile/update', async (req: AuthenticatedRequest, res) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
-  console.log(`🔄 Updating profile for user ${req.user.id}:`, req.body);
+  console.log(`📝 Updating profile for user ${req.user.id}:`, req.body);
 
   try {
     const { data, error } = await supabase
@@ -265,7 +264,7 @@ app.post('/api/profile/update', async (req: AuthenticatedRequest, res) => {
     // Invalidate cache for this user
     invalidateUserCache(req.user.id);
 
-    await logAudit(req.user.id, 'update_profile', true, req.body, undefined, req);
+    await logAudit(req.user.id, 'update_profile', true, req.body, null, req);
     res.json({ success: true, data });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -293,7 +292,7 @@ app.post('/api/check-ins/list', async (req: AuthenticatedRequest, res) => {
 
     if (error) throw error;
 
-    await logAudit(req.user.id, 'get_check_ins', true, { limit, offset }, undefined, req);
+    await logAudit(req.user.id, 'get_check_ins', true, { limit, offset }, null, req);
     res.json({ success: true, data });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -316,7 +315,7 @@ app.post('/api/check-ins/create', async (req: AuthenticatedRequest, res) => {
 
     if (error) throw error;
 
-    await logAudit(req.user.id, 'create_check_in', true, req.body, undefined, req);
+    await logAudit(req.user.id, 'create_check_in', true, req.body, null, req);
     res.json({ success: true, data });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -352,7 +351,7 @@ app.post('/api/devices/register', async (req: AuthenticatedRequest, res) => {
 
     if (error) throw error;
 
-    await logAudit(req.user.id, 'register_device', true, { device_type }, undefined, req);
+    await logAudit(req.user.id, 'register_device', true, { device_type }, null, req);
     res.json({ success: true, data });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -373,7 +372,7 @@ app.post('/api/devices/get', async (req: AuthenticatedRequest, res) => {
 
     if (error && error.code !== 'PGRST116') throw error;
 
-    await logAudit(req.user.id, 'get_device', true, {}, undefined, req);
+    await logAudit(req.user.id, 'get_device', true, {}, null, req);
     res.json({ success: true, data });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -393,7 +392,7 @@ app.post('/api/devices/update-active', async (req: AuthenticatedRequest, res) =>
 
     if (error) throw error;
 
-    await logAudit(req.user.id, 'update_last_active', true, {}, undefined, req);
+    await logAudit(req.user.id, 'update_last_active', true, {}, null, req);
     res.json({ success: true, data });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -420,7 +419,7 @@ app.post('/api/chat/messages', async (req: AuthenticatedRequest, res) => {
 
     if (error) throw error;
 
-    await logAudit(req.user.id, 'get_chat_messages', true, { limit, offset }, undefined, req);
+    await logAudit(req.user.id, 'get_chat_messages', true, { limit, offset }, null, req);
     res.json({ success: true, data });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -450,7 +449,7 @@ app.post('/api/chat/send', async (req: AuthenticatedRequest, res) => {
 
     if (error) throw error;
 
-    await logAudit(req.user.id, 'create_chat_message', true, { role }, undefined, req);
+    await logAudit(req.user.id, 'create_chat_message', true, { role }, null, req);
     res.json({ success: true, data });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
