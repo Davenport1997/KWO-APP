@@ -115,8 +115,7 @@ router.post('/cache/invalidate-user', verifyToken, requireAdmin, (req: Request, 
 router.post('/cache/warm', verifyToken, requireAdmin, async (req: Request, res: Response) => {
   try {
     // Import here to avoid circular dependency
-    const { getAddictionFacts, getDailyChallenges, getMicroLessons } = await import('../utils/staticDataCache.js');
-
+ const { getAddictionFacts, getDailyChallenges, getMicroLessons } = await import('../utils/staticDataCache');
     console.log('[Admin] Warming up caches...');
 
     // Pre-load static data
