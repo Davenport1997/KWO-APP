@@ -430,7 +430,7 @@ router.post('/silent-refresh', async (req: Request, res: Response): Promise<void
 
     // Generate new tokens for this user
     const accessToken = generateToken(user_id, authUser.email || '', 'free_user');
-    const refreshToken = generateRefreshToken(user_id);
+    const refreshToken = generateRefreshToken(user_id, authUser.email || '', 'free_user');
 
     console.log(`[SilentRefresh] Successfully issued new tokens for user: ${user_id}`);
 
