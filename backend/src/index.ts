@@ -128,10 +128,10 @@ app.post('/admin/cache/clear', verifyToken, verifyAdmin, (req: AuthenticatedRequ
 /**
  * JWT Verification Middleware
  */
-interface AuthenticatedRequest extends express.Request {
-  user?: { id: string; email: string };
+type AuthenticatedRequest = Omit<express.Request, 'user'> & {
+  user?: any;
   token?: string;
-}
+};
 
 app.use(async (req: AuthenticatedRequest, res, next) => {
   console.log(`🔨 ${req.method} ${req.path}`);
@@ -414,7 +414,8 @@ app.post('/checkin/submit', verifyToken, async (req: AuthenticatedRequest, res) 
         created_at: new Date().toISOString(),
       });
     if (error) throw error;
-    res.json({ success: true, data: { checkin_id: data?.[0]?.id || 'ok', streak: 0, points_earned: 10 } });
+    const checkinId = (data as any)?.[0]?.id || 'ok';
+    res.json({ success: true, data: { checkin_id: checkinId, streak: 0, points_earned: 10 } });
   } catch (error) {
     res.status(400).json({ success: false, error: error instanceof Error ? error.message : 'Unknown' });
   }
