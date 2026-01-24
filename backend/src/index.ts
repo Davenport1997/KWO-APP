@@ -10,12 +10,12 @@
  * - Helmet security headers
  */
 
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { createClient } from '@supabase/supabase-js';
-import dotenv from 'dotenv';
 import {
   userProfileCache,
   userSettingsCache,
@@ -38,8 +38,6 @@ import challengeRoutes from './routes/challenges.js';
 import wellnessRoutes from './routes/calculations.js';
 import paymentRoutes from './routes/payment.js';
 import subscriptionRoutes from './routes/subscription.js';
-
-dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
