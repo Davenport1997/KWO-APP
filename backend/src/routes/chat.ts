@@ -1,7 +1,13 @@
 import { Router, Request, Response } from 'express';
 import { verifyToken, requireOwnership } from '../middleware/auth.js';
+import OpenAI from 'openai';
 
 const router = Router();
+
+// Initialize OpenAI
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
 // Mock chat storage
 const mockChatHistory: Record<string, Array<{
@@ -42,8 +48,34 @@ router.post('/message', verifyToken, async (req: Request, res: Response): Promis
       return;
     }
 
-    // Mock AI response
-    const mockResponse = generateMockResponse(message, conversation_type);
+    // Get conversation history for context
+    const userHistory = mockChatHistory[userId!] || [];
+    const recentHistory = userHistory.slice(-10); // Last 10 messages for context
+
+    // Prepare messages for OpenAI
+    const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+      {
+        role: 'system',
+        content: `You are River, a supportive and empathetic AI companion focused on mental wellness, addiction recovery, and personal growth. You provide compassionate support while encouraging healthy habits and professional help when needed. Be warm, understanding, and non-judgmental.`
+      },
+      // Add conversation history
+      ...recentHistory.flatMap(entry => [
+        { role: 'user' as const, content: entry.message },
+        { role: 'assistant' as const, content: entry.response }
+      ]),
+      // Add current message
+      { role: 'user', content: message }
+    ];
+
+    // Call OpenAI API
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4-turbo-preview', // or 'gpt-3.5-turbo' for faster/cheaper
+      messages: messages,
+      max_tokens: 500,
+      temperature: 0.7,
+    });
+
+    const aiResponse = completion.choices[0].message.content || 'I understand. How can I support you?';
 
     // Store in mock history
     if (!mockChatHistory[userId!]) {
@@ -54,7 +86,7 @@ router.post('/message', verifyToken, async (req: Request, res: Response): Promis
       id: `msg_${Date.now()}`,
       user_id: userId!,
       message,
-      response: mockResponse,
+      response: aiResponse,
       type: 'text' as const,
       created_at: new Date().toISOString()
     };
@@ -65,15 +97,26 @@ router.post('/message', verifyToken, async (req: Request, res: Response): Promis
       success: true,
       data: {
         message_id: chatEntry.id,
-        response: mockResponse,
+        response: aiResponse,
         usage: {
-          input_tokens: Math.ceil(message.length / 4),
-          output_tokens: Math.ceil(mockResponse.length / 4)
+          input_tokens: completion.usage?.prompt_tokens || 0,
+          output_tokens: completion.usage?.completion_tokens || 0
         }
       }
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Chat message error:', error);
+    
+    // Handle OpenAI API errors
+    if (error.status === 401) {
+      res.status(500).json({
+        success: false,
+        error: 'OpenAI API configuration error',
+        code: 'API_CONFIG_ERROR'
+      });
+      return;
+    }
+
     res.status(500).json({
       success: false,
       error: 'Failed to process message',
@@ -136,9 +179,25 @@ router.post('/voice', verifyToken, async (req: Request, res: Response): Promise<
       return;
     }
 
-    // Mock transcription (in production, call OpenAI Whisper API)
+    // For now, use mock transcription
+    // In production, implement OpenAI Whisper API
     const mockTranscription = 'How are you feeling today about your recovery?';
-    const mockResponse = generateMockResponse(mockTranscription, 'check-in');
+    
+    // Get AI response using OpenAI
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-3.5-turbo',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are River, a supportive AI companion for mental wellness and recovery.'
+        },
+        { role: 'user', content: mockTranscription }
+      ],
+      max_tokens: 300,
+      temperature: 0.7,
+    });
+
+    const aiResponse = completion.choices[0].message.content || 'I understand. How can I support you?';
 
     if (!mockChatHistory[userId!]) {
       mockChatHistory[userId!] = [];
@@ -148,7 +207,7 @@ router.post('/voice', verifyToken, async (req: Request, res: Response): Promise<
       id: `msg_${Date.now()}`,
       user_id: userId!,
       message: mockTranscription,
-      response: mockResponse,
+      response: aiResponse,
       type: 'voice' as const,
       created_at: new Date().toISOString()
     };
@@ -160,7 +219,7 @@ router.post('/voice', verifyToken, async (req: Request, res: Response): Promise<
       data: {
         message_id: chatEntry.id,
         transcription: mockTranscription,
-        response: mockResponse
+        response: aiResponse
       }
     });
   } catch (error) {
@@ -218,24 +277,5 @@ router.delete('/history/:messageId', verifyToken, (req: Request, res: Response):
     });
   }
 });
-
-// Helper function to generate mock AI responses
-function generateMockResponse(message: string, type?: string): string {
-  const responses: Record<string, string[]> = {
-    'check-in': [
-      'I appreciate you checking in with me. How are you feeling about your progress today?',
-      'Thank you for sharing. Remember that small steps are still progress.',
-      'I\'m here to support you on your journey. What would help you most right now?'
-    ],
-    'default': [
-      'That\'s an important thought. Tell me more about how you\'re feeling.',
-      'I understand. Recovery is a journey, and I\'m here to help.',
-      'Thank you for opening up. Let\'s work through this together.'
-    ]
-  };
-
-  const responseList = responses[type || 'default'] || responses['default'];
-  return responseList[Math.floor(Math.random() * responseList.length)];
-}
 
 export default router;
