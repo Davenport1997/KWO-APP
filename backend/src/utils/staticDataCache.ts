@@ -7,10 +7,11 @@
 import { challengesCache, factsCache, CACHE_TTLS, generateCacheKey } from './cache.js';
 import { createClient } from '@supabase/supabase-js';
 
-const supabase = createClient(
-  process.env.SUPABASE_URL || '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY || ''
-);
+// ROBUST INITIALIZATION: Prevents Vercel Crash
+const supabaseUrl = process.env.SUPABASE_URL || '';
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || '';
+
+const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
 /**
  * Get or fetch addiction facts (cached for 24 hours)
