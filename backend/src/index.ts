@@ -72,6 +72,18 @@ if (!supabaseUrl || !supabaseServiceKey) {
   throw new Error('Missing Supabase credentials in environment variables');
 }
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+/**
+ * Root Endpoint (PUBLIC - no auth required)
+ */
+app.get('/', (req, res) => {
+  res.json({ 
+    status: 'ok',
+    message: 'KWO Backend is running',
+    timestamp: new Date().toISOString() 
+  });
+});
+
 /**
  * Health Check (PUBLIC - no auth required)
  */
