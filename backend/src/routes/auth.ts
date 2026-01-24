@@ -377,4 +377,77 @@ router.post('/delete-account', verifyToken, async (req: Request, res: Response):
   }
 });
 
+/**
+ * POST /auth/silent-refresh
+ * Silent re-authentication when both tokens have expired
+ * Used by frontend to get new tokens without user interaction
+ * Requires user_id (stored from previous login)
+ */
+router.post('/silent-refresh', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { user_id } = req.body;
+
+    if (!user_id) {
+      res.status(400).json({
+        success: false,
+        error: 'User ID required',
+        code: 'MISSING_USER_ID'
+      });
+      return;
+    }
+
+    console.log(`[SilentRefresh] Attempting silent re-auth for user: ${user_id}`);
+
+    // Get user from Supabase Auth
+    const { data: { user: authUser }, error: authError } = await supabase.auth.admin.getUserById(user_id);
+
+    if (authError || !authUser) {
+      console.log(`[SilentRefresh] User not found: ${user_id}`);
+      res.status(401).json({
+        success: false,
+        error: 'User session invalid. Please log in again.',
+        code: 'SESSION_INVALID'
+      });
+      return;
+    }
+
+    // Verify user profile exists
+    const { data: profile, error: profileError } = await supabase
+      .from('user_profiles')
+      .select('id')
+      .eq('user_id', user_id)
+      .single();
+
+    if (profileError || !profile) {
+      console.log(`[SilentRefresh] User profile not found: ${user_id}`);
+      res.status(401).json({
+        success: false,
+        error: 'User profile not found',
+        code: 'PROFILE_NOT_FOUND'
+      });
+      return;
+    }
+
+    // Generate new tokens for this user
+    const accessToken = generateToken(user_id, authUser.email || '', 'free_user');
+    const refreshToken = generateRefreshToken(user_id);
+
+    console.log(`[SilentRefresh] Successfully issued new tokens for user: ${user_id}`);
+
+    res.status(200).json({
+      success: true,
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      user_id: user_id
+    });
+  } catch (error: any) {
+    console.error('[SilentRefresh] Error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Silent refresh failed',
+      code: 'SILENT_REFRESH_ERROR'
+    });
+  }
+});
+
 export default router;
