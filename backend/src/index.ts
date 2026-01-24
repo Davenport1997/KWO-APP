@@ -25,7 +25,6 @@ import {
   getAllCacheStats,
   clearAllCaches
 } from './utils/cache.js';
-import { verifyToken } from './middleware/auth.js';
 import adminRoutes from './routes/admin.js';
 import partnersRoutes from './routes/partners.js';
 
@@ -74,6 +73,7 @@ const userLimiter = rateLimit({
 
 // Initialize Supabase client
 const supabaseUrl = process.env.SUPABASE_URL || '';
+// Support both SERVICE_ROLE_KEY and SERVICE_KEY as fallbacks
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || '';
 
 if (!supabaseUrl || !supabaseServiceKey) {
@@ -101,46 +101,93 @@ app.get('/', (req, res) => {
 });
 
 /**
- * Extended Request type for authenticated requests
+ * Cache Statistics Endpoint (admin only - for monitoring)
+ */
+app.get('/admin/cache-stats', verifyToken, verifyAdmin, (req: AuthenticatedRequest, res) => {
+  // In production, verify user is admin
+  const stats = getAllCacheStats();
+  res.json({
+    success: true,
+    data: stats,
+    timestamp: new Date().toISOString()
+  });
+});
+
+/**
+ * Clear Cache Endpoint (admin only)
+ */
+app.post('/admin/cache/clear', verifyToken, verifyAdmin, (req: AuthenticatedRequest, res) => {
+  // In production, verify user is admin
+  clearAllCaches();
+  res.json({
+    success: true,
+    message: 'All caches cleared'
+  });
+});
+
+/**
+ * JWT Verification Middleware
  */
 type AuthenticatedRequest = Omit<express.Request, 'user'> & {
   user?: any;
   token?: string;
 };
 
-/**
- * Public Route Checker - No auth required for these
- */
-app.use((req: AuthenticatedRequest, res, next) => {
+app.use(async (req: AuthenticatedRequest, res, next) => {
   console.log(`🔨 ${req.method} ${req.path}`);
 
-  // Public routes that don't require authentication
-  const publicRoutes = [
-    '/health',
-    '/favicon.ico',
-    '/favicon.png',
-    '/',
-    '/auth/register',
-    '/auth/login',
-    '/auth/refresh',
-    '/ai/status'
-  ];
-
-  // Check if route is public
-  const isPublicRoute = publicRoutes.some(route => req.path === route) ||
-                        req.path.startsWith('/api/partners');
-
-  if (isPublicRoute) {
+  // Public routes that don't require JWT
+  const publicRoutes = ['/health', '/favicon.ico', '/favicon.png', '/'];
+  if (publicRoutes.includes(req.path) || req.path.startsWith('/api/partners')) {
     console.log(`✅ Skipping auth for public route: ${req.path}`);
     return next();
   }
 
-  // All other routes will be protected by verifyToken middleware
-  // applied to individual route groups below
-  next();
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    console.log('❌ Missing authorization header');
+    return res.status(401).json({ error: 'Missing authorization header' });
+  }
+
+  const token = authHeader.substring(7);
+  req.token = token;
+
+  try {
+    // Verify JWT with Supabase
+    const response = await fetch(`${supabaseUrl}/auth/v1/user`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      }
+    });
+
+    if (!response.ok) {
+      console.log('❌ Token invalid or expired');
+      return res.status(401).json({ error: 'Invalid or expired token' });
+    }
+
+    const userData = (await response.json()) as { id?: string; email?: string };
+
+    if (!userData.id) {
+      console.log('❌ No user ID in token');
+      return res.status(401).json({ error: 'No user ID in token' });
+    }
+
+    req.user = {
+      id: userData.id,
+      email: userData.email || '',
+    };
+
+    console.log(`✅ User authenticated: ${req.user.id}`);
+    next();
+  } catch (error) {
+    console.error('❌ Token verification error:', error);
+    return res.status(401).json({ error: 'Token verification failed' });
+  }
 });
 
-// Apply per-user rate limiting after public route check
+// Apply per-user rate limiting after auth
 app.use(userLimiter);
 
 /**
@@ -170,13 +217,20 @@ async function logAudit(
   }
 }
 
+// Middleware for requiring user auth
+function verifyToken(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
+  if (!req.user) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  next();
+}
+
 /**
  * SECURITY: Admin Authorization Middleware
  * Only allows 'service_role' or specific emails to access admin routes
  */
 function verifyAdmin(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
   const isAdmin = (req.user as any)?.role === 'service_role' ||
-    (req.user as any)?.role === 'admin' ||
     process.env.ADMIN_EMAILS?.split(',').includes(req.user?.email || '');
 
   if (!isAdmin) {
@@ -186,33 +240,11 @@ function verifyAdmin(req: AuthenticatedRequest, res: express.Response, next: exp
   next();
 }
 
-/**
- * Cache Statistics Endpoint (admin only - for monitoring)
- */
-app.get('/admin/cache-stats', verifyToken, verifyAdmin, (req: AuthenticatedRequest, res) => {
-  const stats = getAllCacheStats();
-  res.json({
-    success: true,
-    data: stats,
-    timestamp: new Date().toISOString()
-  });
-});
-
-/**
- * Clear Cache Endpoint (admin only)
- */
-app.post('/admin/cache/clear', verifyToken, verifyAdmin, (req: AuthenticatedRequest, res) => {
-  clearAllCaches();
-  res.json({
-    success: true,
-    message: 'All caches cleared'
-  });
-});
 
 /**
  * User Profile
  */
-app.post('/api/profile/get', verifyToken, async (req: AuthenticatedRequest, res) => {
+app.post('/api/profile/get', async (req: AuthenticatedRequest, res) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
@@ -289,7 +321,7 @@ app.put('/user/:userId/profile', verifyToken, async (req: AuthenticatedRequest, 
   }
 });
 
-app.post('/api/profile/update', verifyToken, async (req: AuthenticatedRequest, res) => {
+app.post('/api/profile/update', async (req: AuthenticatedRequest, res) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
   console.log(`📝 Updating profile for user ${req.user.id}:`, req.body);
@@ -323,7 +355,7 @@ app.post('/api/profile/update', verifyToken, async (req: AuthenticatedRequest, r
 /**
  * Check-ins
  */
-app.post('/api/check-ins/list', verifyToken, async (req: AuthenticatedRequest, res) => {
+app.post('/api/check-ins/list', async (req: AuthenticatedRequest, res) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
@@ -347,7 +379,7 @@ app.post('/api/check-ins/list', verifyToken, async (req: AuthenticatedRequest, r
   }
 });
 
-app.post('/api/check-ins/create', verifyToken, async (req: AuthenticatedRequest, res) => {
+app.post('/api/check-ins/create', async (req: AuthenticatedRequest, res) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
@@ -392,7 +424,7 @@ app.post('/checkin/submit', verifyToken, async (req: AuthenticatedRequest, res) 
 /**
  * Push Notifications
  */
-app.post('/api/devices/register', verifyToken, async (req: AuthenticatedRequest, res) => {
+app.post('/api/devices/register', async (req: AuthenticatedRequest, res) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
@@ -425,7 +457,7 @@ app.post('/api/devices/register', verifyToken, async (req: AuthenticatedRequest,
   }
 });
 
-app.post('/api/devices/get', verifyToken, async (req: AuthenticatedRequest, res) => {
+app.post('/api/devices/get', async (req: AuthenticatedRequest, res) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
@@ -446,7 +478,7 @@ app.post('/api/devices/get', verifyToken, async (req: AuthenticatedRequest, res)
   }
 });
 
-app.post('/api/devices/update-active', verifyToken, async (req: AuthenticatedRequest, res) => {
+app.post('/api/devices/update-active', async (req: AuthenticatedRequest, res) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
@@ -469,7 +501,7 @@ app.post('/api/devices/update-active', verifyToken, async (req: AuthenticatedReq
 /**
  * Chat
  */
-app.post('/api/chat/messages', verifyToken, async (req: AuthenticatedRequest, res) => {
+app.post('/api/chat/messages', async (req: AuthenticatedRequest, res) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
@@ -493,7 +525,7 @@ app.post('/api/chat/messages', verifyToken, async (req: AuthenticatedRequest, re
   }
 });
 
-app.post('/api/chat/send', verifyToken, async (req: AuthenticatedRequest, res) => {
+app.post('/api/chat/send', async (req: AuthenticatedRequest, res) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
@@ -550,7 +582,7 @@ app.post('/chat/message', verifyToken, async (req: AuthenticatedRequest, res) =>
 app.use('/auth', authRoutes);
 app.use('/chat', verifyToken, chatRoutes);
 app.use('/checkin', verifyToken, checkinRoutes);
-app.use('/ai', verifyToken, aiRoutes); // ✅ Protected with JWT auth
+app.use('/ai', verifyToken, aiRoutes);
 app.use('/community', verifyToken, communityRoutes);
 app.use('/challenges', verifyToken, challengeRoutes);
 app.use('/wellness', verifyToken, wellnessRoutes);
@@ -566,6 +598,74 @@ app.use('/admin', adminRoutes);
  * Partners Routes (accountability partners)
  */
 app.use('/api/partners', partnersRoutes);
+
+/**
+ * DELETE ACCOUNT - User account deletion
+ * POST /api/users/delete-account
+ * Deletes all user data with 30-day legal hold for crisis/violence logs
+ */
+app.post('/api/users/delete-account', verifyToken, async (req: AuthenticatedRequest, res) => {
+  if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+
+  const userId = req.user.id;
+
+  try {
+    console.log(`[Account Deletion] Starting account deletion for user: ${userId}`);
+
+    // Delete user data from all tables (immediate deletion)
+    await supabase.from('user_profiles').delete().eq('user_id', userId);
+    await supabase.from('user_check_ins').delete().eq('user_id', userId);
+    await supabase.from('chat_messages').delete().eq('user_id', userId);
+    await supabase.from('journal_entries').delete().eq('user_id', userId);
+    await supabase.from('mood_logs').delete().eq('user_id', userId);
+    await supabase.from('accountability_partners').delete().eq('user_id', userId);
+    await supabase.from('partner_notifications').delete().eq('user_id', userId);
+    await supabase.from('user_settings').delete().eq('user_id', userId);
+    await supabase.from('user_devices').delete().eq('user_id', userId);
+
+    // Crisis and violence logs: Mark for deletion in 30 days (legal hold)
+    const thirtyDaysLater = new Date();
+    thirtyDaysLater.setDate(thirtyDaysLater.getDate() + 30);
+
+    await supabase
+      .from('crisis_events')
+      .update({
+        marked_for_deletion_at: new Date().toISOString(),
+        deletion_scheduled_at: thirtyDaysLater.toISOString()
+      })
+      .eq('user_id', userId);
+
+    await supabase
+      .from('violence_logs')
+      .update({
+        marked_for_deletion_at: new Date().toISOString(),
+        deletion_scheduled_at: thirtyDaysLater.toISOString()
+      })
+      .eq('user_id', userId);
+
+    // Log the deletion for audit
+    await logAudit(userId, 'delete_account', true, { crisisLogsHeldUntil: thirtyDaysLater.toISOString() }, null, req);
+
+    console.log(`[Account Deletion] Completed for user: ${userId}. Crisis logs held for 30 days.`);
+
+    res.status(200).json({
+      success: true,
+      message: 'Account deleted successfully. Crisis-related logs will be held for 30 days per legal requirements.',
+      data: {
+        userId,
+        deletedAt: new Date().toISOString(),
+        crisisLogsDeletedAt: thirtyDaysLater.toISOString()
+      }
+    });
+  } catch (error: any) {
+    console.error('[Account Deletion] Error:', error);
+    await logAudit(userId, 'delete_account', false, {}, error.message, req);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to delete account'
+    });
+  }
+});
 
 /**
  * Error handling
