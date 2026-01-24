@@ -6,7 +6,7 @@ const router = Router();
 
 // Initialize Supabase with service role key
 const supabaseUrl = process.env.SUPABASE_URL!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY!;
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
 // =============================================================================
@@ -565,6 +565,84 @@ router.post('/notifications/mark-read', async (req: Request, res: Response): Pro
     });
   } catch (error: any) {
     console.error('[Partners API] Unexpected error in markNotificationRead:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Internal server error'
+    });
+  }
+});
+
+/**
+ * POST /api/partners/notifications/delete
+ * Delete a notification
+ * Requires: Authorization header with valid JWT token
+ */
+router.post('/notifications/delete', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { notification_id } = req.body;
+
+    if (!notification_id) {
+      res.status(400).json({
+        success: false,
+        error: 'Missing required field: notification_id'
+      });
+      return;
+    }
+
+    // Verify authorization
+    const authHeader = req.headers.authorization;
+    const tokenUserId = getUserIdFromToken(authHeader);
+    if (!tokenUserId) {
+      res.status(401).json({
+        success: false,
+        error: 'Unauthorized'
+      });
+      return;
+    }
+
+    // Verify notification belongs to user before deleting
+    const { data: notification, error: fetchError } = await supabase
+      .from('partner_notifications')
+      .select('user_id')
+      .eq('id', notification_id)
+      .single();
+
+    if (fetchError || !notification) {
+      res.status(404).json({
+        success: false,
+        error: 'Notification not found'
+      });
+      return;
+    }
+
+    if (notification.user_id !== tokenUserId) {
+      res.status(403).json({
+        success: false,
+        error: 'Unauthorized - notification does not belong to user'
+      });
+      return;
+    }
+
+    // Delete notification
+    const { error } = await supabase
+      .from('partner_notifications')
+      .delete()
+      .eq('id', notification_id);
+
+    if (error) {
+      console.error('[Partners API] Error deleting notification:', error);
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+      return;
+    }
+
+    res.status(200).json({
+      success: true
+    });
+  } catch (error: any) {
+    console.error('[Partners API] Unexpected error in deleteNotification:', error);
     res.status(500).json({
       success: false,
       error: error.message || 'Internal server error'
