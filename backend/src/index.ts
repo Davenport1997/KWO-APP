@@ -81,6 +81,17 @@ app.get('/health', (req, res) => {
 });
 
 /**
+ * Root Route (PUBLIC)
+ */
+app.get('/', (req, res) => {
+  res.json({
+    message: 'KWO Secure Backend API',
+    status: 'running',
+    version: '1.0.0'
+  });
+});
+
+/**
  * Cache Statistics Endpoint (admin only - for monitoring)
  */
 app.get('/admin/cache-stats', verifyToken, (req: AuthenticatedRequest, res) => {
