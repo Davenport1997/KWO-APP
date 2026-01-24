@@ -28,6 +28,17 @@ import {
 import adminRoutes from './routes/admin.js';
 import partnersRoutes from './routes/partners.js';
 
+// MISSION CRITICAL: Importing missing modular routes
+import authRoutes from './routes/auth.js';
+import aiRoutes from './routes/ai.js';
+import chatRoutes from './routes/chat.js';
+import checkinRoutes from './routes/checkin.js';
+import communityRoutes from './routes/community.js';
+import challengeRoutes from './routes/challenges.js';
+import wellnessRoutes from './routes/calculations.js';
+import paymentRoutes from './routes/payment.js';
+import subscriptionRoutes from './routes/subscription.js';
+
 dotenv.config();
 
 const app = express();
@@ -58,8 +69,8 @@ app.use(globalLimiter);
 const userLimiter = rateLimit({
   windowMs: 1 * 60 * 1000,
   max: 100,
-  keyGenerator: (req) => req.user?.id || req.ip,
-  skip: (req) => !req.user, // Skip if no user authenticated
+  keyGenerator: (req) => (req as any).user?.id || req.ip,
+  skip: (req) => !(req as any).user, // Skip if no user authenticated
 });
 
 // Initialize Supabase client
@@ -94,7 +105,7 @@ app.get('/', (req, res) => {
 /**
  * Cache Statistics Endpoint (admin only - for monitoring)
  */
-app.get('/admin/cache-stats', verifyToken, (req: AuthenticatedRequest, res) => {
+app.get('/admin/cache-stats', verifyToken, verifyAdmin, (req: AuthenticatedRequest, res) => {
   // In production, verify user is admin
   const stats = getAllCacheStats();
   res.json({
@@ -107,7 +118,7 @@ app.get('/admin/cache-stats', verifyToken, (req: AuthenticatedRequest, res) => {
 /**
  * Clear Cache Endpoint (admin only)
  */
-app.post('/admin/cache/clear', verifyToken, (req: AuthenticatedRequest, res) => {
+app.post('/admin/cache/clear', verifyToken, verifyAdmin, (req: AuthenticatedRequest, res) => {
   // In production, verify user is admin
   clearAllCaches();
   res.json({
@@ -216,6 +227,21 @@ function verifyToken(req: AuthenticatedRequest, res: express.Response, next: exp
   next();
 }
 
+/**
+ * SECURITY: Admin Authorization Middleware
+ * Only allows 'service_role' or specific emails to access admin routes
+ */
+function verifyAdmin(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
+  const isAdmin = (req.user as any)?.role === 'service_role' ||
+    process.env.ADMIN_EMAILS?.split(',').includes(req.user?.email || '');
+
+  if (!isAdmin) {
+    console.warn(`🛑 Unauthorized admin attempt by user ${req.user?.id}`);
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  next();
+}
+
 
 /**
  * User Profile
@@ -261,7 +287,11 @@ app.post('/api/profile/get', async (req: AuthenticatedRequest, res) => {
 
 // ALIAS ROUTES for api.ts frontend client
 app.get('/user/:userId/profile', verifyToken, async (req: AuthenticatedRequest, res) => {
-  req.user = { id: req.params.userId, email: '' }; // Force user ID from params for this alias
+  // SECURITY FIX: IDOR Protection
+  if (req.user?.id !== req.params.userId) {
+    return res.status(403).json({ success: false, error: 'Access denied: You can only access your own profile' });
+  }
+
   try {
     const { data, error } = await supabase
       .from('user_profiles')
@@ -276,6 +306,11 @@ app.get('/user/:userId/profile', verifyToken, async (req: AuthenticatedRequest, 
 });
 
 app.put('/user/:userId/profile', verifyToken, async (req: AuthenticatedRequest, res) => {
+  // SECURITY FIX: IDOR Protection
+  if (req.user?.id !== req.params.userId) {
+    return res.status(403).json({ success: false, error: 'Access denied: You can only update your own profile' });
+  }
+
   try {
     const { data, error } = await supabase
       .from('user_profiles')
@@ -540,6 +575,20 @@ app.post('/chat/message', verifyToken, async (req: AuthenticatedRequest, res) =>
     res.status(400).json({ success: false, error: error instanceof Error ? error.message : 'Unknown' });
   }
 });
+
+/**
+ * MISSING MISSION-CRITICAL MODULE MOUNTS
+ * These preserve all original logic but layer in the modular features.
+ */
+app.use('/auth', authRoutes);
+app.use('/chat', verifyToken, chatRoutes);
+app.use('/checkin', verifyToken, checkinRoutes);
+app.use('/ai', verifyToken, aiRoutes);
+app.use('/community', verifyToken, communityRoutes);
+app.use('/challenges', verifyToken, challengeRoutes);
+app.use('/wellness', verifyToken, wellnessRoutes);
+app.use('/payment', verifyToken, paymentRoutes);
+app.use('/subscription', verifyToken, subscriptionRoutes);
 
 /**
  * Admin Routes (cache management)
