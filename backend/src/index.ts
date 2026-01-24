@@ -25,6 +25,7 @@ import {
   getAllCacheStats,
   clearAllCaches
 } from './utils/cache.js';
+import { verifyToken } from './middleware/auth.js';
 import adminRoutes from './routes/admin.js';
 import partnersRoutes from './routes/partners.js';
 
@@ -73,7 +74,6 @@ const userLimiter = rateLimit({
 
 // Initialize Supabase client
 const supabaseUrl = process.env.SUPABASE_URL || '';
-// Support both SERVICE_ROLE_KEY and SERVICE_KEY as fallbacks
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || '';
 
 if (!supabaseUrl || !supabaseServiceKey) {
@@ -101,93 +101,46 @@ app.get('/', (req, res) => {
 });
 
 /**
- * Cache Statistics Endpoint (admin only - for monitoring)
- */
-app.get('/admin/cache-stats', verifyToken, verifyAdmin, (req: AuthenticatedRequest, res) => {
-  // In production, verify user is admin
-  const stats = getAllCacheStats();
-  res.json({
-    success: true,
-    data: stats,
-    timestamp: new Date().toISOString()
-  });
-});
-
-/**
- * Clear Cache Endpoint (admin only)
- */
-app.post('/admin/cache/clear', verifyToken, verifyAdmin, (req: AuthenticatedRequest, res) => {
-  // In production, verify user is admin
-  clearAllCaches();
-  res.json({
-    success: true,
-    message: 'All caches cleared'
-  });
-});
-
-/**
- * JWT Verification Middleware
+ * Extended Request type for authenticated requests
  */
 type AuthenticatedRequest = Omit<express.Request, 'user'> & {
   user?: any;
   token?: string;
 };
 
-app.use(async (req: AuthenticatedRequest, res, next) => {
+/**
+ * Public Route Checker - No auth required for these
+ */
+app.use((req: AuthenticatedRequest, res, next) => {
   console.log(`🔨 ${req.method} ${req.path}`);
 
-  // Public routes that don't require JWT
-  const publicRoutes = ['/health', '/favicon.ico', '/favicon.png', '/'];
-  if (publicRoutes.includes(req.path) || req.path.startsWith('/api/partners')) {
+  // Public routes that don't require authentication
+  const publicRoutes = [
+    '/health',
+    '/favicon.ico',
+    '/favicon.png',
+    '/',
+    '/auth/register',
+    '/auth/login',
+    '/auth/refresh',
+    '/ai/status'
+  ];
+
+  // Check if route is public
+  const isPublicRoute = publicRoutes.some(route => req.path === route) ||
+                        req.path.startsWith('/api/partners');
+
+  if (isPublicRoute) {
     console.log(`✅ Skipping auth for public route: ${req.path}`);
     return next();
   }
 
-  const authHeader = req.headers.authorization;
-
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    console.log('❌ Missing authorization header');
-    return res.status(401).json({ error: 'Missing authorization header' });
-  }
-
-  const token = authHeader.substring(7);
-  req.token = token;
-
-  try {
-    // Verify JWT with Supabase
-    const response = await fetch(`${supabaseUrl}/auth/v1/user`, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${token}`,
-      }
-    });
-
-    if (!response.ok) {
-      console.log('❌ Token invalid or expired');
-      return res.status(401).json({ error: 'Invalid or expired token' });
-    }
-
-    const userData = (await response.json()) as { id?: string; email?: string };
-
-    if (!userData.id) {
-      console.log('❌ No user ID in token');
-      return res.status(401).json({ error: 'No user ID in token' });
-    }
-
-    req.user = {
-      id: userData.id,
-      email: userData.email || '',
-    };
-
-    console.log(`✅ User authenticated: ${req.user.id}`);
-    next();
-  } catch (error) {
-    console.error('❌ Token verification error:', error);
-    return res.status(401).json({ error: 'Token verification failed' });
-  }
+  // All other routes will be protected by verifyToken middleware
+  // applied to individual route groups below
+  next();
 });
 
-// Apply per-user rate limiting after auth
+// Apply per-user rate limiting after public route check
 app.use(userLimiter);
 
 /**
@@ -217,20 +170,13 @@ async function logAudit(
   }
 }
 
-// Middleware for requiring user auth
-function verifyToken(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
-  if (!req.user) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-  next();
-}
-
 /**
  * SECURITY: Admin Authorization Middleware
  * Only allows 'service_role' or specific emails to access admin routes
  */
 function verifyAdmin(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
   const isAdmin = (req.user as any)?.role === 'service_role' ||
+    (req.user as any)?.role === 'admin' ||
     process.env.ADMIN_EMAILS?.split(',').includes(req.user?.email || '');
 
   if (!isAdmin) {
@@ -240,11 +186,33 @@ function verifyAdmin(req: AuthenticatedRequest, res: express.Response, next: exp
   next();
 }
 
+/**
+ * Cache Statistics Endpoint (admin only - for monitoring)
+ */
+app.get('/admin/cache-stats', verifyToken, verifyAdmin, (req: AuthenticatedRequest, res) => {
+  const stats = getAllCacheStats();
+  res.json({
+    success: true,
+    data: stats,
+    timestamp: new Date().toISOString()
+  });
+});
+
+/**
+ * Clear Cache Endpoint (admin only)
+ */
+app.post('/admin/cache/clear', verifyToken, verifyAdmin, (req: AuthenticatedRequest, res) => {
+  clearAllCaches();
+  res.json({
+    success: true,
+    message: 'All caches cleared'
+  });
+});
 
 /**
  * User Profile
  */
-app.post('/api/profile/get', async (req: AuthenticatedRequest, res) => {
+app.post('/api/profile/get', verifyToken, async (req: AuthenticatedRequest, res) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
@@ -321,7 +289,7 @@ app.put('/user/:userId/profile', verifyToken, async (req: AuthenticatedRequest, 
   }
 });
 
-app.post('/api/profile/update', async (req: AuthenticatedRequest, res) => {
+app.post('/api/profile/update', verifyToken, async (req: AuthenticatedRequest, res) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
   console.log(`📝 Updating profile for user ${req.user.id}:`, req.body);
@@ -355,7 +323,7 @@ app.post('/api/profile/update', async (req: AuthenticatedRequest, res) => {
 /**
  * Check-ins
  */
-app.post('/api/check-ins/list', async (req: AuthenticatedRequest, res) => {
+app.post('/api/check-ins/list', verifyToken, async (req: AuthenticatedRequest, res) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
@@ -379,7 +347,7 @@ app.post('/api/check-ins/list', async (req: AuthenticatedRequest, res) => {
   }
 });
 
-app.post('/api/check-ins/create', async (req: AuthenticatedRequest, res) => {
+app.post('/api/check-ins/create', verifyToken, async (req: AuthenticatedRequest, res) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
@@ -424,7 +392,7 @@ app.post('/checkin/submit', verifyToken, async (req: AuthenticatedRequest, res) 
 /**
  * Push Notifications
  */
-app.post('/api/devices/register', async (req: AuthenticatedRequest, res) => {
+app.post('/api/devices/register', verifyToken, async (req: AuthenticatedRequest, res) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
@@ -457,7 +425,7 @@ app.post('/api/devices/register', async (req: AuthenticatedRequest, res) => {
   }
 });
 
-app.post('/api/devices/get', async (req: AuthenticatedRequest, res) => {
+app.post('/api/devices/get', verifyToken, async (req: AuthenticatedRequest, res) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
@@ -478,7 +446,7 @@ app.post('/api/devices/get', async (req: AuthenticatedRequest, res) => {
   }
 });
 
-app.post('/api/devices/update-active', async (req: AuthenticatedRequest, res) => {
+app.post('/api/devices/update-active', verifyToken, async (req: AuthenticatedRequest, res) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
@@ -501,7 +469,7 @@ app.post('/api/devices/update-active', async (req: AuthenticatedRequest, res) =>
 /**
  * Chat
  */
-app.post('/api/chat/messages', async (req: AuthenticatedRequest, res) => {
+app.post('/api/chat/messages', verifyToken, async (req: AuthenticatedRequest, res) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
@@ -525,7 +493,7 @@ app.post('/api/chat/messages', async (req: AuthenticatedRequest, res) => {
   }
 });
 
-app.post('/api/chat/send', async (req: AuthenticatedRequest, res) => {
+app.post('/api/chat/send', verifyToken, async (req: AuthenticatedRequest, res) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
@@ -582,7 +550,7 @@ app.post('/chat/message', verifyToken, async (req: AuthenticatedRequest, res) =>
 app.use('/auth', authRoutes);
 app.use('/chat', verifyToken, chatRoutes);
 app.use('/checkin', verifyToken, checkinRoutes);
-app.use('/ai', verifyToken, aiRoutes);
+app.use('/ai', verifyToken, aiRoutes); // ✅ Protected with JWT auth
 app.use('/community', verifyToken, communityRoutes);
 app.use('/challenges', verifyToken, challengeRoutes);
 app.use('/wellness', verifyToken, wellnessRoutes);
