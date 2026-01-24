@@ -33,6 +33,9 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Trust Vercel proxy for express-rate-limit
+app.set('trust proxy', 1);
+
 // Security middleware
 app.use(helmet());
 app.use(express.json({ limit: '10mb' }));
@@ -113,9 +116,10 @@ interface AuthenticatedRequest extends express.Request {
 app.use(async (req: AuthenticatedRequest, res, next) => {
   console.log(`🔨 ${req.method} ${req.path}`);
 
-  // Skip auth for /api/partners routes (uses device ID, not JWT)
-  if (req.path.startsWith('/api/partners')) {
-    console.log('✅ Skipping auth for /api/partners (uses device ID)');
+  // Public routes that don't require JWT
+  const publicRoutes = ['/health', '/favicon.ico', '/favicon.png', '/'];
+  if (publicRoutes.includes(req.path) || req.path.startsWith('/api/partners')) {
+    console.log(`✅ Skipping auth for public route: ${req.path}`);
     return next();
   }
 
