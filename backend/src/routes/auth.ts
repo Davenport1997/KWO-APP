@@ -1,435 +1,474 @@
+import { Router, Request, Response } from 'express';
+import bcryptjs from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { Request, Response, NextFunction } from 'express';
-import { getJWTSecret, getJWTRefreshSecret } from '../utils/validateConfig.js';
-import { isTokenBlacklisted, areAllUserTokensBlacklisted } from '../utils/tokenBlacklist.js';
+import fetch from 'node-fetch';
+import { createClient } from '@supabase/supabase-js';
+import {
+  generateToken,
+  generateRefreshToken,
+  verifyRefreshToken,
+  verifyToken
+} from '../middleware/auth.js';
+import { loginLimiter, signupLimiter } from '../middleware/rateLimiting.js';
+import { logRateLimitEvent } from '../utils/rateLimitMonitoring.js';
 
-// Extend Express Request to include user data
-declare global {
-  namespace Express {
-    interface Request {
-      user?: {
-        id: string;
-        email: string;
-        role: 'free_user' | 'premium_user' | 'admin';
-        iat: number;
-        exp: number;
-      };
-      token?: string;
-      isAnonymous?: boolean;
-    }
-  }
+const router = Router();
+
+// Initialize Supabase
+const supabaseUrl = process.env.SUPABASE_URL || '';
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || '';
+
+if (!supabaseUrl || !supabaseServiceKey) {
+  console.warn('⚠️ Missing Supabase credentials in auth.ts');
 }
 
+const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
 /**
- * Optional authentication middleware - allows anonymous access
- * If X-Anonymous-Access header is present, skip auth and mark request as anonymous
- * Otherwise, verify token like normal
+ * POST /auth/login
+ * User authentication with email and password
+ * Returns: { access_token, refresh_token, user }
+ * Rate limited: 5 attempts per 15 minutes per IP
  */
-export const optionalAuth = (req: Request, res: Response, next: NextFunction): void => {
+router.post('/login', loginLimiter, async (req: Request, res: Response): Promise<void> => {
   try {
-    // Check if this is an anonymous request
-    const isAnonymous = req.headers['x-anonymous-access'] === 'true';
+    const { email, password } = req.body;
 
-    if (isAnonymous) {
-      // Mark request as anonymous and continue
-      req.isAnonymous = true;
-      next();
-      return;
-    }
-
-    // Extract token from Authorization header
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      // No auth header - proceed as anonymous/unauthenticated
-      // Only verifyToken should strictly require the header
-      next();
-      return;
-    }
-
-    const token = authHeader.substring(7); // Remove "Bearer " prefix
-    req.token = token;
-
-    // Check if token is blacklisted (revoked)
-    if (isTokenBlacklisted(token)) {
-      res.status(401).json({
+    // Validate input
+    if (!email || !password) {
+      res.status(400).json({
         success: false,
-        error: 'Token has been revoked',
-        code: 'TOKEN_REVOKED'
+        error: 'Email and password are required',
+        code: 'MISSING_CREDENTIALS'
       });
       return;
     }
 
-    // Verify token signature and expiration
-    const decoded = jwt.verify(token, getJWTSecret()) as {
-      id: string;
-      email: string;
-      role: 'free_user' | 'premium_user' | 'admin';
-      iat: number;
-      exp: number;
-    };
-
-    // Check if all tokens for this user were revoked (logout all devices)
-    if (areAllUserTokensBlacklisted(decoded.id, new Date(decoded.iat * 1000))) {
-      res.status(401).json({
-        success: false,
-        error: 'Session has been terminated',
-        code: 'SESSION_TERMINATED'
-      });
-      return;
-    }
-
-    // Attach user to request object
-    req.user = decoded;
-    req.isAnonymous = false;
-
-    next();
-  } catch (error) {
-    if (error instanceof jwt.TokenExpiredError) {
-      res.status(401).json({
-        success: false,
-        error: 'Token has expired',
-        code: 'TOKEN_EXPIRED'
-      });
-      return;
-    }
-
-    if (error instanceof jwt.JsonWebTokenError) {
-      res.status(401).json({
-        success: false,
-        error: 'Invalid token',
-        code: 'INVALID_TOKEN'
-      });
-      return;
-    }
-
-    res.status(500).json({
-      success: false,
-      error: 'Token verification failed',
-      code: 'TOKEN_VERIFY_ERROR'
-    });
-  }
-};
-
-/**
- * Verify JWT token and attach user to request
- * Applied to all protected routes
- * Now includes blacklist checking for token revocation
- */
-export const verifyToken = (req: Request, res: Response, next: NextFunction): void => {
-  try {
-    // Extract token from Authorization header
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      res.status(401).json({
-        success: false,
-        error: 'Missing or invalid authorization header',
-        code: 'MISSING_TOKEN'
-      });
-      return;
-    }
-
-    const token = authHeader.substring(7); // Remove "Bearer " prefix
-    req.token = token;
-
-    // Check if token is blacklisted (revoked)
-    if (isTokenBlacklisted(token)) {
-      res.status(401).json({
-        success: false,
-        error: 'Token has been revoked',
-        code: 'TOKEN_REVOKED'
-      });
-      return;
-    }
-
-    // Verify token signature and expiration
-    const decoded = jwt.verify(token, getJWTSecret()) as {
-      id: string;
-      email: string;
-      role: 'free_user' | 'premium_user' | 'admin';
-      iat: number;
-      exp: number;
-    };
-
-    // Check if all tokens for this user were revoked (logout all devices)
-    if (areAllUserTokensBlacklisted(decoded.id, new Date(decoded.iat * 1000))) {
-      res.status(401).json({
-        success: false,
-        error: 'Session has been terminated',
-        code: 'SESSION_TERMINATED'
-      });
-      return;
-    }
-
-    // Attach user to request object
-    req.user = decoded;
-
-    // Check token expiration (jwt.verify does this, but explicit check for clarity)
-    if (decoded.exp && decoded.exp < Math.floor(Date.now() / 1000)) {
-      res.status(401).json({
-        success: false,
-        error: 'Token has expired',
-        code: 'TOKEN_EXPIRED'
-      });
-      return;
-    }
-
-    next();
-  } catch (error) {
-    if (error instanceof jwt.TokenExpiredError) {
-      res.status(401).json({
-        success: false,
-        error: 'Token has expired',
-        code: 'TOKEN_EXPIRED'
-      });
-      return;
-    }
-
-    if (error instanceof jwt.JsonWebTokenError) {
-      res.status(401).json({
-        success: false,
-        error: 'Invalid token',
-        code: 'INVALID_TOKEN'
-      });
-      return;
-    }
-
-    res.status(500).json({
-      success: false,
-      error: 'Token verification failed',
-      code: 'TOKEN_VERIFY_ERROR'
-    });
-  }
-};
-
-/**
- * Verify token expiration from refresh token
- */
-export const verifyRefreshToken = (token: string): any => {
-  try {
-    return jwt.verify(token, getJWTRefreshSecret());
-  } catch (error) {
-    throw new Error('Invalid refresh token');
-  }
-};
-
-/**
- * Generate new JWT token
- */
-export const generateToken = (
-  userId: string,
-  email: string,
-  role: 'free_user' | 'premium_user' | 'admin'
-): string => {
-  const expiresIn = process.env.JWT_EXPIRE_IN || '15m';
-  return jwt.sign(
-    {
-      id: userId,
+    // Use Supabase auth
+    const { data: { user: authUser }, error: authError } = await supabase.auth.signInWithPassword({
       email,
-      role
-    },
-    getJWTSecret(),
-    { expiresIn } as any
-  );
-};
-
-/**
- * Generate refresh token
- */
-export const generateRefreshToken = (
-  userId: string,
-  email: string,
-  role: 'free_user' | 'premium_user' | 'admin'
-): string => {
-  const expiresIn = process.env.JWT_REFRESH_EXPIRE_IN || '7d';
-  return jwt.sign(
-    {
-      id: userId,
-      email,
-      role
-    },
-    getJWTRefreshSecret(),
-    { expiresIn } as any
-  );
-};
-
-/**
- * Track IDOR attempts per user for rate limiting
- */
-const idorAttempts = new Map<string, { count: number; firstAttempt: number }>();
-const IDOR_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
-const IDOR_MAX_ATTEMPTS = 5; // Block after 5 attempts
-const IDOR_BLOCK_DURATION_MS = 60 * 60 * 1000; // Block for 1 hour
-
-/**
- * Require user to own the resource (user ID match)
- * Enhanced with security logging, rate limiting, and alerting for IDOR attacks
- */
-export const requireOwnership = (req: Request, res: Response, next: NextFunction): void => {
-  const { userId } = req.params;
-
-  if (!req.user) {
-    res.status(401).json({
-      success: false,
-      error: 'User not authenticated',
-      code: 'NOT_AUTHENTICATED'
+      password
     });
-    return;
-  }
 
-  // Log all resource access attempts for security audit
-  const accessLog = {
-    requestingUserId: req.user.id,
-    targetResourceUserId: userId,
-    role: req.user.role,
-    endpoint: req.originalUrl,
-    method: req.method,
-    timestamp: new Date().toISOString(),
-    ip: req.ip || req.socket.remoteAddress
-  };
+    if (authError || !authUser) {
+      res.status(401).json({
+        success: false,
+        error: 'Invalid email or password',
+        code: 'INVALID_CREDENTIALS'
+      });
+      return;
+    }
 
-  // Admins can access any user's data, but log it
-  if (req.user.role === 'admin') {
-    console.log('[AUDIT] Admin access:', JSON.stringify(accessLog));
-    next();
-    return;
-  }
+    // Get user role from user_profiles table
+    const { data: userProfile } = await supabase
+      .from('user_profiles')
+      .select('id, role')
+      .eq('auth_id', authUser.id)
+      .single();
 
-  // Regular users can only access their own data
-  if (req.user.id !== userId) {
-    // Track IDOR attempts for this user
-    const attackerId = req.user.id;
-    const now = Date.now();
-    const userAttempts = idorAttempts.get(attackerId);
+    const role = userProfile?.role || 'free_user';
 
-    if (userAttempts) {
-      // Check if within window
-      if (now - userAttempts.firstAttempt < IDOR_WINDOW_MS) {
-        userAttempts.count++;
-      } else {
-        // Reset window
-        idorAttempts.set(attackerId, { count: 1, firstAttempt: now });
+    // Generate tokens
+    const accessToken = generateToken(authUser.id, authUser.email || '', role as any);
+    const refreshToken = generateRefreshToken(authUser.id, authUser.email || '', role as any);
+
+    // Return tokens and user info
+    res.json({
+      success: true,
+      data: {
+        access_token: accessToken,
+        refresh_token: refreshToken,
+        user: {
+          id: authUser.id,
+          email: authUser.email,
+          role
+        }
       }
-    } else {
-      idorAttempts.set(attackerId, { count: 1, firstAttempt: now });
-    }
+    });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Login failed',
+      code: 'LOGIN_ERROR'
+    });
+  }
+});
 
-    const currentAttempts = idorAttempts.get(attackerId)?.count || 1;
+/**
+ * POST /auth/refresh
+ * Refresh access token using refresh token
+ * Returns: { access_token, refresh_token }
+ */
+router.post('/refresh', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { refresh_token } = req.body;
 
-    // Log potential IDOR attempt with severity
-    const severity = currentAttempts >= IDOR_MAX_ATTEMPTS ? 'CRITICAL' :
-      currentAttempts >= 3 ? 'HIGH' : 'MEDIUM';
-
-    console.warn(`[SECURITY] [${severity}] IDOR attempt #${currentAttempts}:`, JSON.stringify({
-      ...accessLog,
-      blocked: true,
-      reason: 'User ID mismatch',
-      attemptCount: currentAttempts,
-      severity
-    }));
-
-    // If too many attempts, log critical alert and consider blocking
-    if (currentAttempts >= IDOR_MAX_ATTEMPTS) {
-      console.error('[SECURITY ALERT] IDOR attack detected - user blocked:', JSON.stringify({
-        attackerId,
-        totalAttempts: currentAttempts,
-        windowMs: IDOR_WINDOW_MS,
-        action: 'BLOCKED',
-        recommendation: 'Review user activity and consider account suspension'
-      }));
-
-      // Return a generic error (don't reveal rate limiting to attacker)
-      res.status(403).json({
+    if (!refresh_token) {
+      res.status(400).json({
         success: false,
-        error: 'Access denied',
-        code: 'FORBIDDEN'
+        error: 'Refresh token is required',
+        code: 'MISSING_REFRESH_TOKEN'
       });
       return;
     }
 
-    res.status(403).json({
-      success: false,
-      error: 'You do not have permission to access this resource',
-      code: 'FORBIDDEN'
+    // Verify refresh token
+    const decoded = verifyRefreshToken(refresh_token);
+
+    // Generate new access token
+    const accessToken = generateToken(decoded.id, decoded.email, decoded.role);
+
+    // Optionally generate new refresh token (rolling refresh)
+    const newRefreshToken = generateRefreshToken(decoded.id, decoded.email, decoded.role);
+
+    res.json({
+      success: true,
+      data: {
+        access_token: accessToken,
+        refresh_token: newRefreshToken
+      }
     });
-    return;
-  }
-
-  next();
-};
-
-/**
- * Require premium subscription
- */
-export const requirePremium = (req: Request, res: Response, next: NextFunction): void => {
-  if (!req.user) {
+  } catch (error) {
+    console.error('Token refresh error:', error);
     res.status(401).json({
       success: false,
-      error: 'User not authenticated',
-      code: 'NOT_AUTHENTICATED'
+      error: 'Token refresh failed',
+      code: 'REFRESH_TOKEN_ERROR'
     });
-    return;
   }
-
-  if (req.user.role !== 'premium_user' && req.user.role !== 'admin') {
-    res.status(403).json({
-      success: false,
-      error: 'This feature requires a premium subscription',
-      code: 'PREMIUM_REQUIRED'
-    });
-    return;
-  }
-
-  next();
-};
+});
 
 /**
- * Require specific role
+ * GET /auth/verify
+ * Verify user session (protected route)
+ * Returns: { user }
  */
-export const requireRole = (...allowedRoles: string[]) => {
-  return (req: Request, res: Response, next: NextFunction): void => {
-    if (!req.user) {
+router.get('/verify', verifyToken, (req: Request, res: Response): void => {
+  res.json({
+    success: true,
+    data: {
+      user: req.user
+    }
+  });
+});
+
+/**
+ * POST /auth/logout
+ * Logout user (invalidates refresh token on client side)
+ * Returns: success message
+ */
+router.post('/logout', verifyToken, (req: Request, res: Response): void => {
+  // In production, you would:
+  // 1. Add refresh token to a blacklist/revocation list
+  // 2. Clear any server-side sessions
+  // For now, just return success
+  res.json({
+    success: true,
+    message: 'Logged out successfully'
+  });
+});
+
+/**
+ * POST /auth/apple
+ * Handle Apple Sign-In authentication
+ * Expects: { code, user (optional) }
+ * Returns: { access_token, refresh_token, user }
+ */
+router.post('/apple', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { code, user: appleUser } = req.body;
+
+    if (!code) {
+      res.status(400).json({
+        success: false,
+        error: 'Authorization code is required',
+        code: 'MISSING_AUTH_CODE'
+      });
+      return;
+    }
+
+    // Create JWT signed with Apple private key
+    const applePrivateKey = process.env.APPLE_PRIVATE_KEY;
+    const appleKeyId = process.env.APPLE_KEY_ID;
+    const appleTeamId = process.env.APPLE_TEAM_ID;
+    const bundleId = 'com.vibecode.hopecompanion.0ajx7d';
+
+    if (!applePrivateKey || !appleKeyId || !appleTeamId) {
+      console.error('Missing Apple credentials in environment');
+      res.status(500).json({
+        success: false,
+        error: 'Server configuration error',
+        code: 'MISSING_APPLE_CONFIG'
+      });
+      return;
+    }
+
+    // Create JWT for Apple token exchange
+    const clientSecret = jwt.sign(
+      {
+        iss: appleTeamId,
+        sub: bundleId,
+        aud: 'https://appleid.apple.com',
+        iat: Math.floor(Date.now() / 1000),
+        exp: Math.floor(Date.now() / 1000) + 300 // 5 minutes
+      },
+      applePrivateKey.replace(/\\n/g, '\n'),
+      { algorithm: 'ES256', keyid: appleKeyId }
+    );
+
+    // Exchange code for tokens with Apple
+    const tokenResponse = await fetch('https://appleid.apple.com/auth/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        client_id: bundleId,
+        client_secret: clientSecret
+      }).toString()
+    });
+
+    if (!tokenResponse.ok) {
+      const errorData = await tokenResponse.json();
+      console.error('Apple token exchange failed:', errorData);
       res.status(401).json({
         success: false,
-        error: 'User not authenticated',
+        error: 'Apple authentication failed',
+        code: 'APPLE_AUTH_FAILED'
+      });
+      return;
+    }
+
+    const tokenData: any = await tokenResponse.json();
+
+    // Decode the identity token to get user info
+    const identityToken = tokenData.id_token;
+    const decodedToken: any = jwt.decode(identityToken);
+
+    if (!decodedToken || !decodedToken.sub) {
+      res.status(401).json({
+        success: false,
+        error: 'Invalid Apple identity token',
+        code: 'INVALID_IDENTITY_TOKEN'
+      });
+      return;
+    }
+
+    // Apple user ID (sub claim)
+    const appleUserId = decodedToken.sub;
+    const userEmail = decodedToken.email || (appleUser?.email ? appleUser.email : `${appleUserId}@privaterelay.appleid.com`);
+
+    // Create or update user in your system
+    // For now, use Apple ID as user identifier
+    let userId = `apple_${appleUserId}`;
+
+    // In production, you would:
+    // 1. Check if user exists in your database
+    // 2. If not, create new user
+    // 3. Update Apple user info if needed
+
+    // Generate your own tokens
+    const accessToken = generateToken(userId, userEmail, 'free_user');
+    const refreshToken = generateRefreshToken(userId, userEmail, 'free_user');
+
+    res.json({
+      success: true,
+      data: {
+        access_token: accessToken,
+        refresh_token: refreshToken,
+        user: {
+          id: userId,
+          email: userEmail,
+          role: 'free_user',
+          appleId: appleUserId,
+          firstName: appleUser?.fullName?.givenName || '',
+          lastName: appleUser?.fullName?.familyName || ''
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Apple Sign-In error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Apple Sign-In failed',
+      code: 'APPLE_SIGNIN_ERROR'
+    });
+  }
+});
+
+/**
+ * POST /auth/delete-account
+ * Delete user account and all associated data
+ * Legal hold: Crisis/violence logs held for 30 days (legal compliance)
+ * Requires: Authorization header with valid JWT token
+ */
+router.post('/delete-account', verifyToken, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = (req as any).user?.id;
+
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        error: 'Unauthorized',
         code: 'NOT_AUTHENTICATED'
       });
       return;
     }
 
-    if (!allowedRoles.includes(req.user.role)) {
-      res.status(403).json({
+    console.log(`[Account Deletion] Starting account deletion for user: ${userId}`);
+
+    // Delete user data from all tables (immediate deletion)
+    await supabase.from('user_profiles').delete().eq('auth_id', userId);
+    await supabase.from('user_check_ins').delete().eq('user_id', userId);
+    await supabase.from('chat_messages').delete().eq('user_id', userId);
+    await supabase.from('journal_entries').delete().eq('user_id', userId);
+    await supabase.from('mood_logs').delete().eq('user_id', userId);
+    await supabase.from('accountability_partners').delete().eq('user_id', userId);
+    await supabase.from('partner_notifications').delete().eq('user_id', userId);
+    await supabase.from('user_settings').delete().eq('user_id', userId);
+
+    // Crisis and violence logs: Mark for deletion in 30 days (legal hold)
+    // Store deletion timestamp for scheduled cleanup
+    const thirtyDaysLater = new Date();
+    thirtyDaysLater.setDate(thirtyDaysLater.getDate() + 30);
+
+    await supabase
+      .from('crisis_events')
+      .update({
+        marked_for_deletion_at: new Date().toISOString(),
+        deletion_scheduled_at: thirtyDaysLater.toISOString()
+      })
+      .eq('user_id', userId);
+
+    await supabase
+      .from('violence_logs')
+      .update({
+        marked_for_deletion_at: new Date().toISOString(),
+        deletion_scheduled_at: thirtyDaysLater.toISOString()
+      })
+      .eq('user_id', userId);
+
+    // Delete from Supabase Auth
+    // Note: Supabase Auth deletion requires admin API call
+    // If available, use: await supabase.auth.admin.deleteUser(userId)
+    // For now, just mark as deleted in our system
+
+    console.log(`[Account Deletion] Account deletion scheduled for user: ${userId}. Crisis/violence logs held for 30 days.`);
+
+    res.status(200).json({
+      success: true,
+      message: 'Account deletion initiated. Your data will be permanently deleted. Crisis-related logs will be held for 30 days per legal requirements.',
+      data: {
+        userId,
+        deletedAt: new Date().toISOString(),
+        crisisLogsDeletedAt: thirtyDaysLater.toISOString()
+      }
+    });
+  } catch (error: any) {
+    console.error('[Account Deletion] Error deleting account:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to delete account',
+      code: 'ACCOUNT_DELETION_ERROR'
+    });
+  }
+});
+
+/**
+ * POST /auth/silent-refresh
+ * Silent re-authentication when both tokens have expired
+ * Used by frontend to get new tokens without user interaction
+ * Requires user_id (stored from previous login)
+ */
+router.post('/silent-refresh', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { user_id } = req.body;
+
+    if (!user_id) {
+      res.status(400).json({
         success: false,
-        error: 'You do not have the required role for this action',
-        code: 'INSUFFICIENT_ROLE'
+        error: 'User ID required',
+        code: 'MISSING_USER_ID'
       });
       return;
     }
 
-    next();
-  };
-};
+    console.log(`[SilentRefresh] Attempting silent re-auth for user: ${user_id}`);
 
-/**
- * Require admin role
- */
-export const requireAdmin = (req: Request, res: Response, next: NextFunction): void => {
-  if (!req.user) {
-    res.status(401).json({
-      success: false,
-      error: 'User not authenticated',
-      code: 'NOT_AUTHENTICATED'
+    // Get user from Supabase Auth
+    const { data: { user: authUser }, error: authError } = await supabase.auth.admin.getUserById(user_id);
+
+    if (authError || !authUser) {
+      console.log(`[SilentRefresh] User not found: ${user_id}`);
+      res.status(401).json({
+        success: false,
+        error: 'User session invalid. Please log in again.',
+        code: 'SESSION_INVALID'
+      });
+      return;
+    }
+
+    // Verify user profile exists, create if missing (common for OAuth users)
+    let { data: profile, error: profileError } = await supabase
+      .from('user_profiles')
+      .select('id, role')
+      .eq('auth_id', user_id)
+      .single();
+
+    if (profileError || !profile) {
+      console.log(`[SilentRefresh] User profile not found, creating one for: ${user_id}`);
+
+      // Auto-create profile for OAuth users who don't have one yet
+      const { data: newProfile, error: createError } = await supabase
+        .from('user_profiles')
+        .insert({
+          auth_id: user_id,
+          email: authUser.email || '',
+          role: 'free_user',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+        .select('id, role')
+        .single();
+
+      if (createError || !newProfile) {
+        console.error(`[SilentRefresh] Failed to create profile: ${createError?.message}`);
+        res.status(401).json({
+          success: false,
+          error: 'User profile not found and could not be created',
+          code: 'PROFILE_NOT_FOUND'
+        });
+        return;
+      }
+
+      profile = newProfile;
+      console.log(`[SilentRefresh] Created new profile for user: ${user_id}`);
+    }
+
+    // Generate new tokens for this user with their actual role
+    const userRole = profile.role || 'free_user';
+    const accessToken = generateToken(user_id, authUser.email || '', userRole as any);
+    const refreshToken = generateRefreshToken(user_id, authUser.email || '', userRole as any);
+
+    console.log(`[SilentRefresh] Successfully issued new tokens for user: ${user_id}`);
+
+    res.status(200).json({
+      success: true,
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      user_id: user_id
     });
-    return;
-  }
-
-  if (req.user.role !== 'admin') {
-    res.status(403).json({
+  } catch (error: any) {
+    console.error('[SilentRefresh] Error:', error);
+    res.status(500).json({
       success: false,
-      error: 'This action requires admin privileges',
-      code: 'ADMIN_REQUIRED'
+      error: error.message || 'Silent refresh failed',
+      code: 'SILENT_REFRESH_ERROR'
     });
-    return;
   }
+});
 
-  next();
-};
+export default router;
