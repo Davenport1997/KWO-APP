@@ -414,8 +414,8 @@ router.post('/silent-refresh', async (req: Request, res: Response): Promise<void
     // Verify user profile exists
     const { data: profile, error: profileError } = await supabase
       .from('user_profiles')
-      .select('id')
-      .eq('user_id', user_id)
+      .select('id, role')
+      .eq('auth_id', user_id)
       .single();
 
     if (profileError || !profile) {
@@ -428,9 +428,10 @@ router.post('/silent-refresh', async (req: Request, res: Response): Promise<void
       return;
     }
 
-    // Generate new tokens for this user
-    const accessToken = generateToken(user_id, authUser.email || '', 'free_user');
-    const refreshToken = generateRefreshToken(user_id, authUser.email || '', 'free_user');
+    // Generate new tokens for this user with their actual role
+    const userRole = profile.role || 'free_user';
+    const accessToken = generateToken(user_id, authUser.email || '', userRole as any);
+    const refreshToken = generateRefreshToken(user_id, authUser.email || '', userRole as any);
 
     console.log(`[SilentRefresh] Successfully issued new tokens for user: ${user_id}`);
 
