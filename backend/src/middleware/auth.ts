@@ -15,9 +15,100 @@ declare global {
         exp: number;
       };
       token?: string;
+      isAnonymous?: boolean;
     }
   }
 }
+
+/**
+ * Optional authentication middleware - allows anonymous access
+ * If X-Anonymous-Access header is present, skip auth and mark request as anonymous
+ * Otherwise, verify token like normal
+ */
+export const optionalAuth = (req: Request, res: Response, next: NextFunction): void => {
+  try {
+    // Check if this is an anonymous request
+    const isAnonymous = req.headers['x-anonymous-access'] === 'true';
+
+    if (isAnonymous) {
+      // Mark request as anonymous and continue
+      req.isAnonymous = true;
+      next();
+      return;
+    }
+
+    // Extract token from Authorization header
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      // No auth header - proceed as anonymous/unauthenticated
+      // Only verifyToken should strictly require the header
+      next();
+      return;
+    }
+
+    const token = authHeader.substring(7); // Remove "Bearer " prefix
+    req.token = token;
+
+    // Check if token is blacklisted (revoked)
+    if (isTokenBlacklisted(token)) {
+      res.status(401).json({
+        success: false,
+        error: 'Token has been revoked',
+        code: 'TOKEN_REVOKED'
+      });
+      return;
+    }
+
+    // Verify token signature and expiration
+    const decoded = jwt.verify(token, getJWTSecret()) as {
+      id: string;
+      email: string;
+      role: 'free_user' | 'premium_user' | 'admin';
+      iat: number;
+      exp: number;
+    };
+
+    // Check if all tokens for this user were revoked (logout all devices)
+    if (areAllUserTokensBlacklisted(decoded.id, new Date(decoded.iat * 1000))) {
+      res.status(401).json({
+        success: false,
+        error: 'Session has been terminated',
+        code: 'SESSION_TERMINATED'
+      });
+      return;
+    }
+
+    // Attach user to request object
+    req.user = decoded;
+    req.isAnonymous = false;
+
+    next();
+  } catch (error) {
+    if (error instanceof jwt.TokenExpiredError) {
+      res.status(401).json({
+        success: false,
+        error: 'Token has expired',
+        code: 'TOKEN_EXPIRED'
+      });
+      return;
+    }
+
+    if (error instanceof jwt.JsonWebTokenError) {
+      res.status(401).json({
+        success: false,
+        error: 'Invalid token',
+        code: 'INVALID_TOKEN'
+      });
+      return;
+    }
+
+    res.status(500).json({
+      success: false,
+      error: 'Token verification failed',
+      code: 'TOKEN_VERIFY_ERROR'
+    });
+  }
+};
 
 /**
  * Verify JWT token and attach user to request
@@ -123,7 +214,6 @@ export const verifyRefreshToken = (token: string): any => {
 
 /**
  * Generate new JWT token
- * FIXED: Properly typed SignOptions
  */
 export const generateToken = (
   userId: string,
@@ -138,13 +228,12 @@ export const generateToken = (
       role
     },
     getJWTSecret(),
-    { expiresIn } as jwt.SignOptions
+    { expiresIn }
   );
 };
 
 /**
  * Generate refresh token
- * FIXED: Properly typed SignOptions
  */
 export const generateRefreshToken = (
   userId: string,
@@ -159,13 +248,21 @@ export const generateRefreshToken = (
       role
     },
     getJWTRefreshSecret(),
-    { expiresIn } as jwt.SignOptions
+    { expiresIn }
   );
 };
 
 /**
+ * Track IDOR attempts per user for rate limiting
+ */
+const idorAttempts = new Map<string, { count: number; firstAttempt: number }>();
+const IDOR_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
+const IDOR_MAX_ATTEMPTS = 5; // Block after 5 attempts
+const IDOR_BLOCK_DURATION_MS = 60 * 60 * 1000; // Block for 1 hour
+
+/**
  * Require user to own the resource (user ID match)
- * Enhanced with security logging for audit trail
+ * Enhanced with security logging, rate limiting, and alerting for IDOR attacks
  */
 export const requireOwnership = (req: Request, res: Response, next: NextFunction): void => {
   const { userId } = req.params;
@@ -199,12 +296,55 @@ export const requireOwnership = (req: Request, res: Response, next: NextFunction
 
   // Regular users can only access their own data
   if (req.user.id !== userId) {
-    // Log potential IDOR attempt
-    console.warn('[SECURITY] IDOR attempt detected:', JSON.stringify({
+    // Track IDOR attempts for this user
+    const attackerId = req.user.id;
+    const now = Date.now();
+    const userAttempts = idorAttempts.get(attackerId);
+
+    if (userAttempts) {
+      // Check if within window
+      if (now - userAttempts.firstAttempt < IDOR_WINDOW_MS) {
+        userAttempts.count++;
+      } else {
+        // Reset window
+        idorAttempts.set(attackerId, { count: 1, firstAttempt: now });
+      }
+    } else {
+      idorAttempts.set(attackerId, { count: 1, firstAttempt: now });
+    }
+
+    const currentAttempts = idorAttempts.get(attackerId)?.count || 1;
+
+    // Log potential IDOR attempt with severity
+    const severity = currentAttempts >= IDOR_MAX_ATTEMPTS ? 'CRITICAL' :
+      currentAttempts >= 3 ? 'HIGH' : 'MEDIUM';
+
+    console.warn(`[SECURITY] [${severity}] IDOR attempt #${currentAttempts}:`, JSON.stringify({
       ...accessLog,
       blocked: true,
-      reason: 'User ID mismatch'
+      reason: 'User ID mismatch',
+      attemptCount: currentAttempts,
+      severity
     }));
+
+    // If too many attempts, log critical alert and consider blocking
+    if (currentAttempts >= IDOR_MAX_ATTEMPTS) {
+      console.error('[SECURITY ALERT] IDOR attack detected - user blocked:', JSON.stringify({
+        attackerId,
+        totalAttempts: currentAttempts,
+        windowMs: IDOR_WINDOW_MS,
+        action: 'BLOCKED',
+        recommendation: 'Review user activity and consider account suspension'
+      }));
+
+      // Return a generic error (don't reveal rate limiting to attacker)
+      res.status(403).json({
+        success: false,
+        error: 'Access denied',
+        code: 'FORBIDDEN'
+      });
+      return;
+    }
 
     res.status(403).json({
       success: false,
