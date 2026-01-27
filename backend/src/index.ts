@@ -190,13 +190,7 @@ async function logAudit(
   }
 }
 
-// Middleware for requiring user auth
-function verifyToken(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
-  if (!req.user) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-  next();
-}
+
 
 /**
  * SECURITY: Admin Authorization Middleware
