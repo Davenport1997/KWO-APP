@@ -138,7 +138,9 @@ app.use(async (req: AuthenticatedRequest, res, next) => {
 
   // Public routes that don't require JWT
   const publicRoutes = ['/health', '/favicon.ico', '/favicon.png', '/'];
-  if (publicRoutes.includes(req.path) || req.path.startsWith('/api/partners')) {
+  const publicPrefixes = ['/api/partners', '/auth/'];  // Auth routes need to be public for login/signup/refresh
+
+  if (publicRoutes.includes(req.path) || publicPrefixes.some(prefix => req.path.startsWith(prefix))) {
     console.log(`✅ Skipping auth for public route: ${req.path}`);
     return next();
   }
