@@ -137,8 +137,9 @@ app.use(async (req: AuthenticatedRequest, res, next) => {
   console.log(`🔨 ${req.method} ${req.path}`);
 
   // Public routes that don't require JWT
+  // CRITICAL FIX: Whitelist /auth routes (login, refresh, silent-refresh) so they can be accessed without a token
   const publicRoutes = ['/health', '/favicon.ico', '/favicon.png', '/'];
-  if (publicRoutes.includes(req.path) || req.path.startsWith('/api/partners')) {
+  if (publicRoutes.includes(req.path) || req.path.startsWith('/api/partners') || req.path.startsWith('/auth')) {
     console.log(`✅ Skipping auth for public route: ${req.path}`);
     return next();
   }
@@ -155,11 +156,7 @@ app.use(async (req: AuthenticatedRequest, res, next) => {
 
   try {
     // Verify JWT with Supabase
-    // DEBUG: Log where we are checking against
-    const authUrl = `${supabaseUrl}/auth/v1/user`;
-    // process.stdout.write(`[Auth] Verifying token against: ${authUrl.replace(/.{10}$/, '***')}\n`);
-
-    const response = await fetch(authUrl, {
+    const response = await fetch(`${supabaseUrl}/auth/v1/user`, {
       method: 'GET',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -167,15 +164,8 @@ app.use(async (req: AuthenticatedRequest, res, next) => {
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      console.log(`❌ Token verification failed: ${response.status} ${response.statusText}`);
-      console.log(`   Response: ${errorText}`);
-      console.log(`   Detailed Diagnosis: Backend configured for Supabase URL starting with: ${supabaseUrl.substring(0, 15)}...`);
-      return res.status(401).json({
-        error: 'Invalid or expired token',
-        details: 'Backend rejected token',
-        backend_supabase_url_prefix: supabaseUrl.substring(0, 15) + '...'
-      });
+      console.log('❌ Token invalid or expired');
+      return res.status(401).json({ error: 'Invalid or expired token' });
     }
 
     const userData = (await response.json()) as { id?: string; email?: string };
