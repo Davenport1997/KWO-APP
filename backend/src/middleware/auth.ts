@@ -228,7 +228,7 @@ export const generateToken = (
       role
     },
     getJWTSecret(),
-    { expiresIn }
+    { expiresIn } as any
   );
 };
 
@@ -248,7 +248,7 @@ export const generateRefreshToken = (
       role
     },
     getJWTRefreshSecret(),
-    { expiresIn }
+    { expiresIn } as any
   );
 };
 
